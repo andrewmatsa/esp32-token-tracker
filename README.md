@@ -34,6 +34,36 @@ and shows live usage on its screen.
 - 1.54" ST7789 240×240 TFT display
 - Pin mapping (see `platformio.ini`): SCLK=4, MOSI=6, CS=7, DC=2, RST=3, BL=8
 
+## Wiring
+
+4-wire SPI, write-only (no MISO needed). Pin numbers are ESP32-C3 GPIOs, as
+defined in [`include/config.h`](include/config.h):
+
+| ST7789 pin | ESP32-C3 pin | GPIO |
+| ---------- | ------------ | ---- |
+| VCC        | 3.3V         | —    |
+| GND        | GND          | —    |
+| SCL/SCLK   | GPIO4        | 4    |
+| SDA/MOSI   | GPIO6        | 6    |
+| CS         | GPIO7        | 7    |
+| DC         | GPIO2        | 2    |
+| RES/RST    | GPIO3        | 3    |
+| BLK        | GPIO8        | 8    |
+
+```
+ESP32-C3 Super Mini              ST7789 1.54" TFT
+┌─────────────────┐              ┌─────────────────┐
+│           3.3V ──┼──────────────┼── VCC           │
+│            GND ──┼──────────────┼── GND           │
+│          GPIO4 ──┼──────────────┼── SCL (SCLK)    │
+│          GPIO6 ──┼──────────────┼── SDA (MOSI)    │
+│          GPIO7 ──┼──────────────┼── CS            │
+│          GPIO2 ──┼──────────────┼── DC            │
+│          GPIO3 ──┼──────────────┼── RES (RST)     │
+│          GPIO8 ──┼──────────────┼── BLK           │
+└─────────────────┘              └─────────────────┘
+```
+
 ## Quick start
 
 ```bash
