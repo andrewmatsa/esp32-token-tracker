@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Tracker — WiFi Setup</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .setup-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; width: 100%; max-width: 400px; }
+  h2 { font-size: 1.3rem; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; font-size: 0.8rem; color: var(--sub); }
+  .field input, .field select {
+    background: #222; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); padding: 10px 12px; font-size: 1rem;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .btn-row { display: flex; gap: 10px; margin-top: 8px; }
+  #btn-scan { background: var(--border); color: var(--sub); flex: 0 0 auto; }
+  #btn-save { background: var(--accent); color: #fff; flex: 1; padding: 12px; font-size: 1rem; }
+  #msg { margin-top: 16px; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; display: none; }
+  #msg.ok  { background: #14532d; color: var(--green); }
+  #msg.err { background: #450a0a; color: var(--red); }
+  .spinner { display: none; text-align: center; padding: 10px; color: var(--sub); }
+</style>
+</head>
+<body>
+<div class="setup-box">
+  <h2>WiFi Setup</h2>
+
+  <div class="field">
+    <label for="sel-ssid">Network (SSID)</label>
+    <div class="btn-row" style="margin:0">
+      <select id="sel-ssid" style="flex:1">
+        <option value="">— press Scan or type below —</option>
+      </select>
+      <button id="btn-scan" onclick="scan()">Scan</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="inp-ssid">Or type SSID manually</label>
+    <input id="inp-ssid" type="text" placeholder="Network name" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="field">
+    <label for="inp-pass">Password</label>
+    <input id="inp-pass" type="password" placeholder="WiFi password" autocomplete="new-password">
+  </div>
+
+  <div class="spinner" id="spinner">Connecting…</div>
+
+  <button id="btn-save" onclick="save()">Connect &amp; Save</button>
+
+  <div id="msg"></div>
+</div>
+
+<script>
+  const selSsid  = document.getElementById('sel-ssid');
+  const inpSsid  = document.getElementById('inp-ssid');
+  const inpPass  = document.getElementById('inp-pass');
+  const msgEl    = document.getElementById('msg');
+  const spinner  = document.getElementById('spinner');
+
+  selSsid.onchange = () => { if (selSsid.value) inpSsid.value = selSsid.value; };
+
+  async function scan() {
+    selSsid.innerHTML = '<option>Scanning…</option>';
+    try {
+      const res  = await fetch('/scan');
+      const nets = await res.json();
+      nets.sort((a, b) => b.rssi - a.rssi);
+      selSsid.innerHTML = '<option value="">— select —</option>' +
+        nets.map(n => `<option value="${esc(n.ssid)}">${esc(n.ssid)}${n.enc ? ' 🔒' : ''} (${n.rssi} dBm)</option>`).join('');
+    } catch {
+      selSsid.innerHTML = '<option>Scan failed</option>';
+    }
+  }
+
+  async function save() {
+    const ssid = inpSsid.value.trim() || selSsid.value;
+    const pass = inpPass.value;
+    if (!ssid) { showMsg('Please enter or select a network.', false); return; }
+
+    spinner.style.display = 'block';
+    msgEl.style.display   = 'none';
+    document.getElementById('btn-save').disabled = true;
+
+    const body = new URLSearchParams({ ssid, pass });
+    try {
+      const res  = await fetch('/wifi/save', { method: 'POST', body });
+      const data = await res.json();
+      spinner.style.display = 'none';
+      if (data.ok) {
+        showMsg(`Connected! IP: ${data.ip} — device is restarting…`, true);
+      } else {
+        showMsg(data.msg || 'Connection failed. Check password.', false);
+        document.getElementById('btn-save').disabled = false;
+      }
+    } catch {
+      spinner.style.display = 'none';
+      showMsg('Request failed. Try again.', false);
+      document.getElementById('btn-save').disabled = false;
+    }
+  }
+
+  function showMsg(text, ok) {
+    msgEl.textContent  = text;
+    msgEl.className    = ok ? 'ok' : 'err';
+    msgEl.style.display = 'block';
+  }
+
+  function esc(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Auto-scan on load
+  scan();
+</script>
+</body>
+</html>

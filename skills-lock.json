@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "esp32-firmware-engineer": {
+      "source": "adamlipecz/esp32-firmware-engineer-skill",
+      "sourceType": "github",
+      "skillPath": "esp32-firmware-engineer/SKILL.md",
+      "computedHash": "648876c56ccba5f8c2fd37979e3d254745e4c4d5fd76572a2c790af90fa2a2f5"
+    }
+  }
+}

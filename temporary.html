@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Tracker — TEST MODE</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0f0f0f;
+  --surface: #1a1a1a;
+  --border:  #2e2e2e;
+  --text:    #f0f0f0;
+  --sub:     #888;
+  --green:   #22c55e;
+  --orange:  #f97316;
+  --red:     #ef4444;
+  --accent:  #3b82f6;
+}
+
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); padding-top: 48px; }
+
+#test-banner {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: #7c2d12; color: #fde68a;
+  font-size: 0.78rem; font-weight: 600;
+  text-align: center; padding: 8px 12px; z-index: 200; letter-spacing: 0.02em;
+}
+
+#layout { display: flex; gap: 20px; max-width: 960px; margin: 0 auto; padding: 16px; align-items: flex-start; }
+#main-col { flex: 1; min-width: 0; }
+
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+h1 { font-size: 1.4rem; font-weight: 700; }
+
+.badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; text-transform: uppercase; }
+.badge.online  { background: var(--green); color: #000; }
+.badge.offline { background: var(--border); color: var(--sub); }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--pc, var(--border)); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 14px; transition: box-shadow 0.2s;
+  cursor: pointer;
+}
+.card.is-active  { box-shadow: 0 0 0 1px var(--pc, var(--green)); }
+.card.is-previewing { box-shadow: 0 0 0 2px var(--accent); }
+.card.is-warning { border-color: var(--orange); }
+.card.is-maxed   { border-color: var(--red); }
+.card.is-disabled { opacity: 0.5; }
+
+.card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.platform-icon { font-size: 1.1rem; color: var(--pc, var(--sub)); flex-shrink: 0; }
+.card-title    { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.platform-name { font-size: 1.05rem; font-weight: 700; }
+.detected-model { font-size: 0.72rem; color: var(--sub); font-family: monospace; }
+.enabled-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--sub); flex-shrink: 0; cursor: pointer; user-select: none; }
+.enabled-toggle input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  position: relative;
+  width: 30px; height: 17px;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+.enabled-toggle input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  transition: transform 0.2s ease;
+}
+.enabled-toggle input[type="checkbox"]:checked {
+  background: var(--pc, var(--green));
+}
+.enabled-toggle input[type="checkbox"]:checked::before { transform: translateX(13px); }
+.enabled-toggle input[type="checkbox"]:focus-visible { outline: 2px solid var(--pc, var(--accent)); outline-offset: 2px; }
+.card-actions  { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
+
+button { cursor: pointer; border: none; border-radius: 6px; padding: 6px 12px; font-size: 0.8rem; font-weight: 600; transition: opacity 0.15s; }
+button:hover { opacity: 0.85; }
+.btn-save     { background: var(--green);  color: #000; }
+.btn-delete   { background: var(--border); color: var(--sub); }
+
+/* API key row */
+.apikey-row { margin-bottom: 10px; }
+.apikey-row input {
+  width: 100%; background: #222; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 7px 10px;
+  font-size: 0.85rem; font-family: monospace;
+}
+.apikey-row input:focus { outline: none; border-color: var(--pc, var(--accent)); }
+
+/* Claude-only sync config row */
+.claude-config-row { display: flex; gap: 10px; margin-bottom: 10px; }
+.claude-config-row label { display: flex; flex-direction: column; gap: 3px; flex: 1; font-size: 0.7rem; color: var(--sub); }
+.claude-config-row input, .claude-config-row select {
+  background: #222; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 6px 8px; font-size: 0.82rem;
+}
+.claude-config-row input:focus, .claude-config-row select:focus { outline: none; border-color: var(--pc, var(--accent)); }
+
+/* Read-only status */
+.card-status { margin-bottom: 10px; }
+.progress-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.progress-bar  { flex: 1; height: 16px; background: #222; border-radius: 8px; overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; border-radius: 8px; background: var(--pc, var(--green)); transition: width 0.4s; }
+.pct-label     { font-size: 0.82rem; font-weight: 700; min-width: 38px; text-align: right; }
+.status-row    { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--sub); margin-top: 4px; }
+.status-used   { color: var(--text); font-weight: 600; }
+
+
+.sync-status { font-size: 0.75rem; margin-top: 6px; padding: 5px 8px; border-radius: 6px; display: none; }
+.sync-status.ok   { background: #14532d33; color: #4ade80; display: block; }
+.sync-status.err  { background: #7f1d1d33; color: #f87171; display: block; }
+.sync-status.info { background: #1e3a5f33; color: #60a5fa; display: block; }
+.btn-sync-mock { background: #2e2e2e; color: var(--sub); }
+.btn-sync-live { background: #1e3a5f; color: #60a5fa; }
+#preset-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+#preset-modal[hidden] { display: none; }
+.modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; width: 100%; max-width: 420px; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 1rem; margin-bottom: 16px; }
+.modal-close { background: transparent; border: none; color: var(--sub); font-size: 1rem; padding: 4px 8px; }
+.modal-close:hover { color: var(--text); }
+.preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.preset-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px; background: #222; border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 0.78rem; font-weight: 600; transition: border-color 0.15s, background 0.15s; }
+.preset-btn:hover { border-color: var(--pc, var(--accent)); background: #2a2a2a; }
+.preset-icon { font-size: 1.4rem; color: var(--pc, var(--sub)); }
+
+#btn-add { width: 100%; padding: 12px; background: transparent; border: 2px dashed var(--border); color: var(--sub); border-radius: 12px; font-size: 0.9rem; margin-bottom: 14px; }
+#btn-add:hover { border-color: var(--accent); color: var(--text); }
+
+#wifi-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; font-size: 0.8rem; color: var(--sub); }
+#btn-wifi-reset { background: var(--accent); border: 1px solid var(--accent); color: #fff; font-weight: 600; padding: 7px 14px; border-radius: 6px; font-size: 0.8rem; transition: background 0.15s, border-color 0.15s; }
+#btn-wifi-reset:hover { background: var(--red); border-color: var(--red); }
+
+/* ESP32 display preview */
+#display-col { flex: 0 0 260px; position: sticky; top: 60px; }
+#display-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+#display-wrap h3 { font-size: 0.75rem; color: var(--sub); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; text-align: center; }
+
+#esp-display {
+  width: 240px; height: 240px; background: #000;
+  border: 2px solid #333; border-radius: 4px;
+  font-family: 'Courier New', monospace; font-size: 11px; color: #fff;
+  overflow: hidden; position: relative; margin: 0 auto;
+}
+
+.disp-idle   { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 180px; gap: 8px; color: #555; font-size: 13px; }
+.disp-syncing { font-size: 12px; color: #444; text-align: center; margin-top: 12px; }
+
+.disp-loading-dots {
+  display: flex; justify-content: center; gap: 6px;
+  margin-top: 10px;
+}
+.disp-loading-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  animation: bubble 1.2s ease-in-out infinite;
+}
+.disp-loading-dots span:nth-child(2) { animation-delay: 0.15s; }
+.disp-loading-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bubble {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+  40%           { transform: translateY(-6px); opacity: 1; }
+}
+
+/* Unified "Usage" watch-style screen (all providers) */
+.disp-usage-header  { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px 4px; }
+.disp-usage-sprite  { font-size: 20px; line-height: 1; }
+.disp-usage-sprite-svg { display: block; }
+.disp-usage-title   { font-size: 19px; font-weight: bold; color: #fff; }
+.disp-usage-card    { background: #000; border: 1px solid #262626; border-radius: 12px; width: 220px; margin: 4px auto; padding: 10px 12px; }
+.disp-usage-row1    { display: flex; align-items: center; justify-content: space-between; }
+.disp-usage-pct     { font-size: 25px; font-weight: bold; color: #fff; display: inline-block; }
+.disp-usage-pct.is-updated { animation: pctFlash 0.6s ease-out; }
+.disp-usage-card.is-updated { animation: cardFlash 0.6s ease-out; }
+@keyframes pctFlash {
+  0%   { transform: scale(1.3); color: #4ade80; }
+  100% { transform: scale(1); color: #fff; }
+}
+@keyframes cardFlash {
+  0%   { border-color: #4ade80; }
+  100% { border-color: #262626; }
+}
+.disp-usage-pill    { font-size: 13px; padding: 3px 10px; border-radius: 99px; background: #3a2b52; color: #c9a8ff; font-weight: 600; }
+.disp-usage-bar-wrap{ height: 7px; background: #222; border-radius: 3px; margin: 7px 0 6px; overflow: hidden; }
+.disp-usage-bar-fill{ height: 100%; border-radius: 3px; transition: width 0.4s; }
+.disp-usage-reset   { font-size: 13px; color: #777; text-align: center; }
+.disp-usage-wrap    { height: 100%; display: flex; flex-direction: column; justify-content: center; }
+
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.7)} }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+@media (max-width: 700px) { #layout { flex-direction: column; } #display-col { flex: none; width: 100%; position: static; } #esp-display { margin: 0 auto; } }
+</style>
+</head>
+<body>
+
+<div id="test-banner">
+  ⚠ TEST MODE — running in browser, no ESP32 connected. Keys not stored; sync is simulated with fake data.
+</div>
+
+<div id="layout">
+  <div id="main-col">
+    <header>
+      <h1>Token Tracker</h1>
+      <span id="ws-status" class="badge offline">Offline</span>
+    </header>
+    <main id="agent-list"></main>
+    <button id="btn-add" onclick="openPresetModal()">+ Add Agent</button>
+    <footer id="wifi-footer">
+      <span id="wifi-info">WiFi: —</span>
+      <button id="btn-wifi-reset" onclick="resetWifi()">Change WiFi</button>
+    </footer>
+  </div>
+
+  <div id="display-col">
+    <div id="display-wrap">
+      <h3>ESP32 Display Preview</h3>
+      <div id="esp-display">
+        <div class="disp-idle"><div style="font-size:20px">📟</div><div>No active agent</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="preset-modal" hidden>
+  <div class="modal-box">
+    <div class="modal-header">
+      <span>Choose a platform</span>
+      <button class="modal-close" onclick="closePresetModal()">✕</button>
+    </div>
+    <div class="preset-grid" id="preset-grid"></div>
+  </div>
+</div>
+
+<template id="tpl-card">
+  <div class="card" data-index="" data-platform="">
+    <div class="card-header">
+      <span class="platform-icon"></span>
+      <div class="card-title">
+        <span class="platform-name"></span>
+        <span class="detected-model" hidden></span>
+      </div>
+      <div class="card-actions">
+        <button class="btn-save">Save</button>
+        <button class="btn-sync-mock">Sync Mock</button>
+        <button class="btn-sync-live">Sync Live</button>
+        <button class="btn-delete">Delete</button>
+      </div>
+      <label class="enabled-toggle">
+        <input type="checkbox" class="inp-enabled" checked>
+        <span>Enabled</span>
+      </label>
+    </div>
+    <div class="apikey-row">
+      <input class="inp-apikey" type="password" placeholder="API key (required — needed to fetch data)">
+    </div>
+    <div class="claude-config-row" hidden>
+      <label>Model
+        <input class="inp-model" type="text" placeholder="Default / all models">
+      </label>
+      <label>Update every (sec)
+        <input class="inp-interval" type="number" min="10" placeholder="120">
+      </label>
+    </div>
+    <div class="card-status" hidden>
+      <div class="progress-wrap" hidden>
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <span class="pct-label">0%</span>
+      </div>
+      <div class="status-row">
+        <span class="status-used"></span>
+        <span class="status-reset"></span>
+      </div>
+    </div>
+    <div class="sync-status"></div>
+  </div>
+</template>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════
+// MOCK LAYER
+// ══════════════════════════════════════════════════════════════════
+
+const LS_KEY = 'tt_agents_v2';
+
+function mockLoad() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { return []; }
+}
+function mockSave(list) { localStorage.setItem(LS_KEY, JSON.stringify(list)); }
+
+// Demo agents pre-loaded on first open (when localStorage is empty)
+function mockDemoAgents() {
+  const d = new Date(); d.setMonth(d.getMonth() + 1); d.setDate(1); d.setHours(0,0,0,0);
+  const nextMonth = Math.floor(d.getTime() / 1000);
+  return [
+    {
+      name: 'GPT / OpenAI', model: 'gpt-4o', _apiKey: 'sk-demo',
+      used: 72400, limit: 0, balance: -1, resetEpoch: nextMonth, active: true,
+    },
+    {
+      name: 'Claude', model: '', _apiKey: '',
+      used: 0, limit: 0, balance: -1, resetEpoch: 0, active: false,
+    },
+    {
+      name: 'DeepSeek', model: '', _apiKey: 'sk-demo',
+      used: 0, limit: 0, balance: 3.87, resetEpoch: 0, active: false,
+    },
+  ];
+}
+
+let mockAgents = mockLoad();
+if (mockAgents.length === 0) { mockAgents = mockDemoAgents(); mockSave(mockAgents); }
+
+// Simulate what the ESP32 fetcher would return for a given platform
+function mockFetch(agent) {
+  const name = agent.name.toLowerCase();
+  const d = new Date(); d.setMonth(d.getMonth() + 1); d.setDate(1); d.setHours(0,0,0,0);
+  const nextMonth = Math.floor(d.getTime() / 1000);
+
+  if (name.startsWith('gpt') || name.startsWith('openai') || name.startsWith('o1') || name.startsWith('o3')) {
+    return { model: 'gpt-4o', used: 43200 + Math.floor(Math.random() * 5000), limit: 0, balance: -1, resetEpoch: nextMonth };
+  }
+  if (name.startsWith('deepseek')) {
+    return { model: '', used: 0, limit: 0, balance: 4.23 - Math.random() * 0.5, resetEpoch: 0 };
+  }
+  if (name.startsWith('claude') || name.startsWith('anthropic')) {
+    const now = Math.floor(Date.now() / 1000);
+    // No `model` key here — leave the user's configured probe model untouched.
+    // `models` simulates the live GET /v1/models catalog the real bridge fetches.
+    return {
+      balance: -1,
+      used:         Math.floor(Math.random() * 101), limit: 100,
+      resetEpoch:   now + Math.floor(Math.random() * 5 * 3600),
+      used7d:       Math.floor(Math.random() * 101),
+      resetEpoch7d: now + Math.floor(Math.random() * 7 * 86400),
+      models: ['claude-fable-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    };
+  }
+  if (name.startsWith('cursor')) {
+    const used = Math.floor(Math.random() * 400);
+    const mockModels = ['gpt-4', 'gpt-4o', 'claude-3.5-sonnet'];
+    return { model: agent.model || mockModels[0], models: mockModels, used, limit: 500, balance: -1, resetEpoch: nextMonth };
+  }
+  if (name.startsWith('codex')) {
+    const now = Math.floor(Date.now() / 1000);
+    const mockModels = ['gpt-5.1-codex', 'o3-mini', 'gpt-4o'];
+    return {
+      model: agent.model || mockModels[0], models: mockModels, balance: -1,
+      used:         Math.floor(Math.random() * 101), limit: 100,
+      resetEpoch:   now + Math.floor(Math.random() * 5 * 3600),
+      used7d:       Math.floor(Math.random() * 101),
+      resetEpoch7d: now + Math.floor(Math.random() * 7 * 86400),
+    };
+  }
+  return null; // no auto-sync for this provider
+}
+
+function mockBroadcast(wsInst) {
+  // Send state without actual keys — only hasKey flag
+  const safe = mockAgents.map(a => ({
+    name:       a.name,
+    model:      a.model,
+    hasKey:     !!(a._apiKey),   // never expose actual key
+    used:       a.used       || 0,
+    limit:      a.limit      || 0,
+    resetEpoch: a.resetEpoch || 0,
+    balance:    a.balance    != null ? a.balance : -1,
+    active:     a.active     || false,
+    enabled:    a.enabled    !== false,
+    // 7-day window (Claude only) — not part of the real ESP32 protocol,
+    // carried through the mock for the display preview only.
+    used7d:       a.used7d       || 0,
+    resetEpoch7d: a.resetEpoch7d || 0,
+    syncInterval: a.syncInterval || 0,
+    synced:       a.synced       || false,
+    // Codex/Cursor: model names actually seen in the account's usage this
+    // month, detected on sync — not part of the real ESP32 protocol, carried
+    // through the mock so the browser can offer them as a model picker.
+    models:       a.models       || [],
+  }));
+  const msg = JSON.stringify({ type: 'state', agents: safe });
+  setTimeout(() => wsInst.onmessage?.({ data: msg }), 0);
+}
+
+class MockWebSocket {
+  constructor() {
+    this.readyState = 1;
+    setTimeout(() => { this.onopen?.({}); mockBroadcast(this); }, 80);
+  }
+
+  send(raw) {
+    const msg = JSON.parse(raw);
+
+    if (msg.type === 'update') {
+      const idx = msg.index;
+      while (mockAgents.length <= idx) mockAgents.push({});
+      const prev = mockAgents[idx] || {};
+      mockAgents[idx] = {
+        name:       msg.name,
+        // Model is usually set by the fetcher, but Claude cards let the user
+        // type a probe model directly — accept it if explicitly provided.
+        model:      (msg.model !== undefined ? msg.model : prev.model) || '',
+        _apiKey:    msg.apiKey || prev._apiKey || '',  // persist key internally
+        used:       prev.used       || 0,
+        limit:      prev.limit      || 0,
+        resetEpoch: prev.resetEpoch || 0,
+        balance:    prev.balance    != null ? prev.balance : -1,
+        active:     prev.active     || false,
+        enabled:    prev.enabled    !== false,
+        used7d:       prev.used7d       || 0,
+        resetEpoch7d: prev.resetEpoch7d || 0,
+        syncInterval: msg.syncInterval !== undefined ? msg.syncInterval : (prev.syncInterval || 0),
+        synced:       prev.synced       || false,
+        models:       prev.models       || [],
+      };
+      mockSave(mockAgents);
+      mockBroadcast(this);
+
+    } else if (msg.type === 'setActive') {
+      mockAgents = mockAgents.map((a, i) => ({ ...a, active: i === msg.index }));
+      mockSave(mockAgents);
+      mockBroadcast(this);
+
+    } else if (msg.type === 'setEnabled') {
+      if (mockAgents[msg.index]) mockAgents[msg.index].enabled = msg.enabled;
+      mockSave(mockAgents);
+      mockBroadcast(this);
+
+    } else if (msg.type === 'delete') {
+      mockAgents.splice(msg.index, 1);
+      mockSave(mockAgents);
+      mockBroadcast(this);
+    }
+  }
+
+  close() {}
+}
+
+const _realFetch = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  if (url === '/wifi/info') return { ok: true, json: async () => ({ ssid: 'MockWiFi-5G', ip: '192.168.1.42' }) };
+  if (url === '/wifi/reset') { setTimeout(() => alert('[MOCK] WiFi reset simulated.'), 100); return { ok: true, json: async () => ({ ok: true }) }; }
+  if (url === '/scan') return { ok: true, json: async () => [{ ssid: 'MockWiFi-5G', rssi: -42, enc: true }, { ssid: 'Neighbors_WiFi', rssi: -68, enc: true }, { ssid: 'OpenNet', rssi: -71, enc: false }] };
+  return _realFetch(url, opts);
+};
+
+window.WebSocket = MockWebSocket;
+
+// ══════════════════════════════════════════════════════════════════
+// APP CODE (mirrors data/app.js)
+// ══════════════════════════════════════════════════════════════════
+
+const PRESETS = [
+  { id: 'claude',     name: 'Claude',       icon: '◆', color: '#D97706', models: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'] },
+  { id: 'cursor',     name: 'Cursor',       icon: '✦', color: '#3B82F6', models: ['Fast requests', 'Premium requests'] },
+  { id: 'codex',      name: 'Codex',        icon: '⚡', color: '#10B981', models: ['codex-mini', 'o3-mini', 'gpt-4o'] },
+  { id: 'openai',     name: 'GPT / OpenAI', icon: '◎', color: '#8B5CF6', models: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3', 'o3-mini'] },
+  { id: 'gemini',     name: 'Gemini',       icon: '✧', color: '#EF4444', models: ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'] },
+  { id: 'copilot',    name: 'Copilot',      icon: '◉', color: '#6366F1', models: ['Premium completions'] },
+  { id: 'deepseek',   name: 'DeepSeek',     icon: '◈', color: '#14B8A6', models: ['deepseek-v3', 'deepseek-r1'] },
+  { id: 'perplexity', name: 'Perplexity',   icon: '◇', color: '#F59E0B', models: ['Pro queries'] },
+  { id: 'custom',     name: 'Custom',       icon: '○', color: '#6B7280', models: [] },
+];
+
+function presetFor(name) {
+  const lower = (name || '').toLowerCase();
+  return PRESETS.find(p => lower.startsWith(p.id) || lower === p.name.toLowerCase())
+      || PRESETS.find(p => p.id === 'custom');
+}
+
+function formatTokens(v) {
+  if (v >= 1000000) return (v/1000000).toFixed(1) + 'M';
+  if (v >= 1000)    return (v/1000).toFixed(1) + 'K';
+  return String(v);
+}
+
+function formatCountdown(secs) {
+  if (secs <= 0) return 'due';
+  if (secs >= 86400) return `${Math.floor(secs/86400)}d ${Math.floor((secs%86400)/3600)}h`;
+  if (secs >= 3600)  return `${Math.floor(secs/3600)}h ${String(Math.floor((secs%3600)/60)).padStart(2,'0')}m`;
+  return `${Math.floor(secs/60)}m ${String(secs%60).padStart(2,'0')}s`;
+}
+
+let agents = [], ws = null, countdownInterval = null;
+// Index of the card currently being edited — shown in the ESP32 display
+// preview and highlighted, without waiting for the user to separately click
+// the card background (which sends `setActive` and persists to the device).
+let previewIndex = null;
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen  = () => { document.getElementById('ws-status').textContent = 'Online (mock)'; document.getElementById('ws-status').className = 'badge online'; };
+  ws.onclose = () => { document.getElementById('ws-status').textContent = 'Offline'; document.getElementById('ws-status').className = 'badge offline'; setTimeout(connect, 3000); };
+  ws.onmessage = (e) => { const msg = JSON.parse(e.data); if (msg.type === 'state') { agents = msg.agents; renderAll(); updateDisplayPreview(); } };
+}
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function openPresetModal() { if (agents.length >= 6) { alert('Maximum 6 agents reached.'); return; } document.getElementById('preset-modal').hidden = false; }
+function closePresetModal() { document.getElementById('preset-modal').hidden = true; }
+
+function buildPresetGrid() {
+  const grid = document.getElementById('preset-grid');
+  PRESETS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    btn.style.setProperty('--pc', p.color);
+    btn.innerHTML = `<span class="preset-icon">${p.icon}</span><span>${p.name}</span>`;
+    btn.onclick = () => { closePresetModal(); selectPreset(p.id); };
+    grid.appendChild(btn);
+  });
+}
+
+function selectPreset(presetId) {
+  const preset = PRESETS.find(p => p.id === presetId) || PRESETS.at(-1);
+  const i = agents.length;
+  agents.push({ name: preset.name, model: '', hasKey: false, used: 0, limit: 0, resetEpoch: 0, balance: -1, active: false });
+  document.getElementById('agent-list').appendChild(buildCard(agents[i], i));
+}
+
+function renderAll() {
+  const list = document.getElementById('agent-list');
+  list.innerHTML = '';
+  agents.forEach((ag, i) => list.appendChild(buildCard(ag, i)));
+  // Cards are rebuilt from scratch here, so the highlight from setPreview()
+  // needs reapplying — the underlying element it was set on no longer exists.
+  if (previewIndex != null) {
+    const card = document.querySelector(`.card[data-index="${previewIndex}"]`);
+    if (card) card.classList.add('is-previewing');
+  }
+  startCountdowns();
+}
+
+function buildCard(ag, i) {
+  const tpl  = document.getElementById('tpl-card');
+  const card = tpl.content.cloneNode(true).querySelector('.card');
+  const preset = presetFor(ag.name);
+
+  card.dataset.index    = i;
+  card.dataset.platform = preset.id;
+  card.style.setProperty('--pc', preset.color);
+
+  card.querySelector('.platform-icon').textContent = preset.icon;
+  card.querySelector('.platform-name').textContent = ag.name;
+
+  // Providers that let the user pick/filter by a specific model (an editable
+  // text field, below, rather than a read-only auto-detected label — Cursor
+  // and Codex's model bucket names are account-specific and can't be listed
+  // in a fixed dropdown, so free text works for all three of these).
+  const hasModelPicker = isAnthropic(ag.name) || isCursor(ag.name) || isCodex(ag.name);
+
+  const modelEl = card.querySelector('.detected-model');
+  if (ag.model && !hasModelPicker) { modelEl.textContent = ag.model; modelEl.hidden = false; }
+
+  const keyInput = card.querySelector('.inp-apikey');
+  if (ag.hasKey) keyInput.placeholder = '••••••••  (key stored — enter new to replace)';
+  if (isCodex(ag.name)) {
+    keyInput.placeholder = 'No key needed — reads local Codex CLI login (see tools/usage-daemon.py)';
+    keyInput.disabled = true;
+  }
+
+  if (hasModelPicker) {
+    const cfgRow = card.querySelector('.claude-config-row');
+    cfgRow.hidden = false;
+    const modelInput = card.querySelector('.inp-model');
+    modelInput.value = ag.model || '';
+
+    // Datalist suggestions are never hardcoded here — `ag.models` comes from
+    // a live source fetched on sync (Claude: real GET /v1/models catalog;
+    // Codex/Cursor: model buckets actually billed this month), so the list
+    // always reflects reality instead of a stale hand-picked set. Before the
+    // first sync there's nothing to show yet, so fall back to `preset.models`
+    // (a few illustrative names) just so the field isn't dead on first render.
+    const existingList = card.querySelector('.inp-model-datalist');
+    if (existingList) existingList.remove();
+    const detectedModels = (ag.models && ag.models.length) ? ag.models : preset.models;
+    if (detectedModels.length) {
+      modelInput.placeholder = (ag.models && ag.models.length)
+        ? `Default (${ag.models[0]})`
+        : 'Default / all models — Sync Live once to detect';
+      const listId = `model-list-${i}`;
+      const datalist = document.createElement('datalist');
+      datalist.className = 'inp-model-datalist';
+      datalist.id = listId;
+      datalist.innerHTML = detectedModels.map(m => `<option value="${m}">`).join('');
+      modelInput.after(datalist);
+      modelInput.setAttribute('list', listId);
+    } else {
+      modelInput.placeholder = 'Default / all models — Sync Live once to detect';
+      modelInput.removeAttribute('list');
+    }
+    card.querySelector('.inp-interval').value = ag.syncInterval || '';
+  }
+
+  const pct = (ag.limit > 0) ? Math.min(100, Math.round(ag.used * 100 / ag.limit)) : 0;
+  if (ag.active) card.classList.add('is-active');
+  if (pct >= 85)  card.classList.add('is-warning');
+  if (pct >= 100) card.classList.add('is-maxed');
+  const enabledInput = card.querySelector('.inp-enabled');
+  enabledInput.checked = ag.enabled !== false; // default to enabled for agents saved before this field existed
+  if (!enabledInput.checked) card.classList.add('is-disabled');
+  enabledInput.onchange = () => setEnabled(i, enabledInput.checked);
+
+  card.querySelector('.btn-save').onclick       = () => saveAgent(i);
+  card.querySelector('.btn-delete').onclick     = () => deleteAgent(i);
+
+  // Only OpenAI/DeepSeek/Claude have any auto-sync implementation — hide the
+  // sync buttons for everything else instead of letting the user hit a
+  // runtime "No auto-sync for this provider" error after pasting a key.
+  if (hasAutoSync(ag.name)) {
+    card.querySelector('.btn-sync-mock').onclick = () => syncAgent(i, false);
+    card.querySelector('.btn-sync-live').onclick = () => syncAgent(i, true);
+  } else {
+    card.querySelector('.btn-sync-mock').hidden = true;
+    card.querySelector('.btn-sync-live').hidden = true;
+    card.querySelector('.inp-apikey').placeholder = 'No auto-sync for this platform — manual tracking only';
+  }
+
+  // Clicking the card itself (outside inputs/buttons) makes it the active
+  // agent — no dedicated "Set Active" button needed.
+  card.onclick = (e) => {
+    if (e.target.closest('button, input, select, label')) return;
+    setActive(i);
+  };
+
+  // Any click anywhere in the card — including on buttons, inputs, the
+  // checkbox — previews it immediately, in addition to the focus/input/
+  // change listeners below (covers clicking something that's already
+  // focused, where no new focusin/input/change event would otherwise fire).
+  card.addEventListener('click', () => setPreview(i));
+
+  // Interacting with anything inside the card (focusing a field, typing,
+  // toggling the checkbox) previews it in the ESP32 display immediately —
+  // purely local, no `setActive` round-trip, so it can't steal focus by
+  // triggering a re-render mid-keystroke.
+  card.addEventListener('focusin', () => setPreview(i));
+  card.addEventListener('input', () => setPreview(i));
+  card.addEventListener('change', () => setPreview(i));
+
+  return card;
+}
+
+function setPreview(i) {
+  if (previewIndex !== i) {
+    const prevCard = document.querySelector('.card.is-previewing');
+    if (prevCard) prevCard.classList.remove('is-previewing');
+    previewIndex = i;
+    const card = document.querySelector(`.card[data-index="${i}"]`);
+    if (card) card.classList.add('is-previewing');
+  }
+  updateDisplayPreview();
+}
+
+function startCountdowns() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(updateDisplayPreview, 1000);
+}
+
+function saveAgent(i) {
+  const card   = document.querySelector(`.card[data-index="${i}"]`);
+  const apiKey = card.querySelector('.inp-apikey').value.trim();
+  const name   = card.querySelector('.platform-name').textContent.trim();
+  const msg = { type: 'update', index: i, name };
+  if (apiKey) msg.apiKey = apiKey;
+  if (isAnthropic(name) || isCursor(name) || isCodex(name)) {
+    const model = card.querySelector('.inp-model').value.trim();
+    const interval = parseInt(card.querySelector('.inp-interval').value, 10);
+    if (model) msg.model = model;
+    msg.syncInterval = Number.isFinite(interval) && interval > 0 ? interval : 0;
+  }
+  send(msg);
+}
+
+function setActive(i)  { send({ type: 'setActive', index: i }); }
+function setEnabled(i, enabled) { send({ type: 'setEnabled', index: i, enabled }); }
+
+function deleteAgent(i) {
+  if (!confirm(`Delete "${agents[i]?.name}"?`)) return;
+  send({ type: 'delete', index: i });
+}
+
+async function loadWifiInfo() {
+  try { const d = await (await fetch('/wifi/info')).json(); document.getElementById('wifi-info').textContent = `WiFi: ${d.ssid || '—'}  |  ${d.ip}`; } catch {}
+}
+
+async function resetWifi() {
+  if (!confirm('This will clear WiFi credentials and restart the device into setup mode.')) return;
+  try { await fetch('/wifi/reset', { method: 'POST' }); } catch {}
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ESP32 DISPLAY PREVIEW — adaptive (mirrors display.cpp logic)
+// ══════════════════════════════════════════════════════════════════
+
+function usageBarColor(pct) {
+  return pct >= 85 ? '#ef4444' : pct >= 50 ? '#f97316' : '#22c55e';
+}
+
+function resetLineFor(resetEpoch) {
+  if (!resetEpoch) return '';
+  const now = Math.floor(Date.now() / 1000);
+  return resetEpoch > now ? 'Resets in ' + formatCountdown(resetEpoch - now) : 'Reset due';
+}
+
+// Claude keeps its distinctive pixel-art sprite; every other provider uses
+// its own preset.icon character instead.
+function claudeSpriteSvg(color) {
+  return `
+    <svg class="disp-usage-sprite disp-usage-sprite-svg" width="33" height="18" viewBox="0 0 9 5" shape-rendering="crispEdges">
+      <rect x="1" y="0" width="7" height="1" fill="${color}"/>
+      <rect x="1" y="1" width="1" height="1" fill="${color}"/>
+      <rect x="3" y="1" width="3" height="1" fill="${color}"/>
+      <rect x="7" y="1" width="1" height="1" fill="${color}"/>
+      <rect x="0" y="2" width="9" height="1" fill="${color}"/>
+      <rect x="1" y="3" width="7" height="1" fill="${color}"/>
+      <rect x="1" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="3" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="5" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="7" y="4" width="1" height="1" fill="${color}"/>
+    </svg>`;
+}
+
+// Remembers the last rendered value per card slot (`key`) so a changed
+// number can be flashed — `updateDisplayPreview()` re-renders this innerHTML
+// wholesale on every tick, so comparing against the DOM isn't an option.
+let prevUsageValues = {};
+
+function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine) {
+  const changed = prevUsageValues[key] !== undefined && prevUsageValues[key] !== bigValueText;
+  prevUsageValues[key] = bigValueText;
+  return `
+    <div class="disp-usage-card${changed ? ' is-updated' : ''}">
+      <div class="disp-usage-row1">
+        <span class="disp-usage-pct${changed ? ' is-updated' : ''}">${bigValueText}</span>
+        <span class="disp-usage-pill">${pillLabel}</span>
+      </div>
+      <div class="disp-usage-bar-wrap"><div class="disp-usage-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      <div class="disp-usage-reset">${resetLine}</div>
+    </div>`;
+}
+
+// Same card-based "Usage" layout for every provider (Claude included) — only
+// the pill label / big value / bar color differ per provider's data shape.
+function renderUsageScreen(active, preset) {
+  let cards;
+
+  if (active.enabled === false) {
+    cards = `
+      <div style="text-align:center;font-size:16px;color:#666;font-weight:bold;margin-top:14px">Disabled</div>
+      <div class="disp-syncing">Auto-sync paused</div>`;
+  } else if (hasDualWindow(active)) {
+    const pct5h = Math.min(100, Math.max(0, active.used || 0));
+    const pct7d = Math.min(100, Math.max(0, active.used7d || 0));
+    cards = renderUsageCard(`${active.name}:current`, 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch)) +
+            renderUsageCard(`${active.name}:weekly`,  'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
+  } else {
+    const hasLimit   = active.limit > 0;
+    const hasUsed    = active.used > 0;
+    const hasBalance = active.balance != null && active.balance >= 0;
+    const resetLine  = resetLineFor(active.resetEpoch);
+
+    if (hasLimit) {
+      const pct = Math.min(100, Math.round(active.used * 100 / active.limit));
+      cards = renderUsageCard(`${active.name}:monthly`, 'Monthly', pct + '%', pct, usageBarColor(pct), resetLine);
+    } else if (hasUsed) {
+      // No known limit — bar is a decorative full brand-colored indicator,
+      // the real value is shown as the big number instead of a percentage.
+      cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine);
+    } else if (hasBalance) {
+      cards = renderUsageCard(`${active.name}:balance`, 'Balance', '$' + active.balance.toFixed(2), 100, preset.color, resetLine);
+    } else if (active.synced) {
+      cards = renderUsageCard(`${active.name}:used`, 'Used', '0', 0, preset.color, resetLine);
+    } else {
+      const statusText = hasAutoSync(active.name) ? 'Syncing' : 'No auto-sync';
+      cards = `
+        <div style="text-align:center;font-size:16px;color:#22c55e;font-weight:bold;margin-top:14px">Active</div>
+        <div class="disp-syncing">${statusText}</div>`;
+    }
+  }
+
+  // Bubble dots run continuously whenever the agent is enabled and has
+  // auto-sync configured — a persistent "still alive, still polling"
+  // heartbeat, not just a one-off first-sync loading state.
+  if (active.enabled !== false && hasAutoSync(active.name)) {
+    cards += `<div class="disp-loading-dots" style="color:${preset.color}"><span></span><span></span><span></span></div>`;
+  }
+
+  const sprite = isAnthropic(active.name)
+    ? claudeSpriteSvg(preset.color)
+    : `<span class="disp-usage-sprite" style="color:${preset.color}">${preset.icon}</span>`;
+  // ^ Claude keeps its own pixel-art sprite; every other provider (including
+  // Codex, which also has a dual-window bar) uses its own preset.icon.
+
+  return `
+    <div class="disp-usage-wrap">
+      <div class="disp-usage-header">
+        ${sprite}
+        <span class="disp-usage-title">${active.name}</span>
+      </div>
+      ${cards}
+    </div>`;
+}
+
+function updateDisplayPreview() {
+  const disp   = document.getElementById('esp-display');
+  // A card being edited previews here immediately, ahead of whichever agent
+  // is actually persisted as active on the device.
+  const active = (previewIndex != null && agents[previewIndex]) || agents.find(a => a.active);
+
+  if (!active) {
+    disp.innerHTML = `<div class="disp-idle"><div style="font-size:20px">📟</div><div>No active agent</div><div style="color:#333;font-size:9px">Set an agent active</div></div>`;
+    return;
+  }
+
+  disp.innerHTML = renderUsageScreen(active, presetFor(active.name));
+}
+
+// ── Provider helpers ─────────────────────────────────────────────
+function isOpenAI(name) {
+  // "codex" intentionally excluded: Codex usage isn't visible on the legacy
+  // /v1/usage endpoint (it's tracked via a separate ChatGPT-plan/enterprise
+  // analytics system), so this endpoint would always report 0 for it.
+  const n = name.toLowerCase();
+  return n.startsWith('gpt') || n.startsWith('openai') || n.startsWith('o1') || n.startsWith('o3');
+}
+function isDeepSeek(name) { return name.toLowerCase().startsWith('deepseek'); }
+function isAnthropic(name) {
+  const n = name.toLowerCase();
+  return n.startsWith('claude') || n.startsWith('anthropic');
+}
+function isCursor(name) { return name.toLowerCase().startsWith('cursor'); }
+function isCodex(name) { return name.toLowerCase().startsWith('codex'); }
+// Providers whose data has two rate-limit windows (short + long), rendered
+// as two cards instead of one.
+// Codex only reports dual rate-limit windows account-wide; once filtered to
+// one model it switches to a single credits-used card (no % concept there).
+function hasDualWindow(active) { return isAnthropic(active.name) || (isCodex(active.name) && !active.model); }
+function hasAutoSync(name) { return isOpenAI(name) || isDeepSeek(name) || isAnthropic(name) || isCursor(name) || isCodex(name); }
+
+// One unified bridge (tools/usage-daemon.py --serve) on one port, routed by
+// ?provider= — replaces the old per-provider bridge scripts/ports.
+const BRIDGE_URL = 'http://127.0.0.1:8765/usage';
+
+// ── Real API fetch (browser → provider directly, or via local bridge) ────
+async function realFetch(agent) {
+  const name = agent.name || '';
+
+  if (isAnthropic(name)) {
+    // Anthropic rejects OAuth Bearer requests made directly from a browser
+    // (likely an Origin-based check to stop web pages from replaying a
+    // subscription token). Try the local bridge daemon first — it runs
+    // outside the browser and does the real probe:
+    //   python tools/usage-daemon.py --serve
+    try {
+      const url = `${BRIDGE_URL}?provider=claude` + (agent.model ? `&model=${encodeURIComponent(agent.model)}` : '');
+      const res = await fetch(url);
+      if (res.ok) {
+        const usage = await res.json();
+        // No `model` key here — leave the user's configured probe model untouched.
+        // `usage.models` is the live catalog fetched from GET /v1/models — not
+        // a hardcoded list — so it stays accurate as models are added/retired.
+        return {
+          used: usage.used, limit: usage.limit, balance: -1, resetEpoch: usage.resetEpoch,
+          used7d: usage.used7d || 0, resetEpoch7d: usage.resetEpoch7d || 0,
+          models: usage.models || [],
+        };
+      }
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Bridge returned HTTP ${res.status}`);
+    } catch (bridgeErr) {
+      if (bridgeErr instanceof TypeError) {
+        throw new Error(
+          'Bridge not running — start it with: python tools/usage-daemon.py --serve ' +
+          '(direct browser calls are rejected by Anthropic for OAuth tokens)'
+        );
+      }
+      throw bridgeErr;
+    }
+  }
+
+  if (isCodex(name)) {
+    // No key at all — Codex usage comes from ~/.codex/auth.json (Codex CLI's
+    // own local login), which only a local process can read. Browser-only
+    // testing always goes through the bridge daemon:
+    //   python tools/usage-daemon.py --serve
+    try {
+      const url = `${BRIDGE_URL}?provider=codex` + (agent.model ? `&model=${encodeURIComponent(agent.model)}` : '');
+      const res = await fetch(url);
+      if (res.ok) {
+        const usage = await res.json();
+        // Only fill `model` when the user hasn't already chosen a filter —
+        // `usage.model` is the account's top-credits model this month, a
+        // best-effort "default" since Codex has no true current-model setting.
+        return {
+          used: usage.used, limit: usage.limit, balance: -1, resetEpoch: usage.resetEpoch,
+          used7d: usage.used7d || 0, resetEpoch7d: usage.resetEpoch7d || 0,
+          model: agent.model || usage.model || '',
+          models: usage.models || [],
+        };
+      }
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Bridge returned HTTP ${res.status}`);
+    } catch (bridgeErr) {
+      if (bridgeErr instanceof TypeError) {
+        throw new Error('Bridge not running — start it with: python tools/usage-daemon.py --serve');
+      }
+      throw bridgeErr;
+    }
+  }
+
+  const key = agent._apiKey;
+  if (!key) throw new Error('No API key stored — save the key first');
+
+  if (isOpenAI(name)) {
+    const now = new Date();
+    const year = now.getFullYear(), month = now.getMonth() + 1, today = now.getDate();
+    let total = 0;
+    const modelCounts = {};
+
+    for (let day = 1; day <= today; day++) {
+      const date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      const res = await fetch(`https://api.openai.com/v1/usage?date=${date}`, {
+        headers: { Authorization: `Bearer ${key}` }
+      });
+      if (res.status === 401 || res.status === 403) throw new Error(`API key rejected (HTTP ${res.status})`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const item of data.data || []) {
+        const t = (item.n_context_tokens_total || 0) + (item.n_generated_tokens_total || 0);
+        total += t;
+        const snap = item.snapshot_id;
+        if (snap && t > 0) modelCounts[snap] = (modelCounts[snap] || 0) + t;
+      }
+    }
+
+    const d = new Date(year, month, 1); // 1st of next month
+    const resetEpoch = Math.floor(d.getTime() / 1000);
+    const model = Object.entries(modelCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || '';
+    return { used: total, limit: 0, balance: -1, resetEpoch, model };
+  }
+
+  if (isCursor(name)) {
+    // Direct browser calls to api2.cursor.sh are CORS-blocked in practice —
+    // go through the local bridge daemon instead:
+    //   python tools/usage-daemon.py --serve
+    try {
+      const url = `${BRIDGE_URL}?provider=cursor` + (agent.model ? `&model=${encodeURIComponent(agent.model)}` : '');
+      const res = await fetch(url);
+      if (res.ok) {
+        const usage = await res.json();
+        // Only fill `model` when the user hasn't already chosen a filter —
+        // `usage.model` is the account's most-requested bucket this month, a
+        // best-effort "default" since Cursor has no true current-model setting.
+        return {
+          used: usage.used, limit: usage.limit, balance: -1, resetEpoch: usage.resetEpoch,
+          model: agent.model || usage.model || '',
+          models: usage.models || [],
+        };
+      }
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Bridge returned HTTP ${res.status}`);
+    } catch (bridgeErr) {
+      if (bridgeErr instanceof TypeError) {
+        throw new Error('Bridge not running — start it with: python tools/usage-daemon.py --serve');
+      }
+      throw bridgeErr;
+    }
+  }
+
+  if (isDeepSeek(name)) {
+    const res = await fetch('https://api.deepseek.com/user/balance', {
+      headers: { Authorization: `Bearer ${key}` }
+    });
+    if (res.status === 401 || res.status === 403) throw new Error(`API key rejected (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const infos = data.balance_infos || [];
+    const info = infos.find(i => i.currency === 'USD') || infos[0];
+    const balance = parseFloat(info?.total_balance || '0');
+    return { used: 0, limit: 0, balance, resetEpoch: 0, model: '' };
+  }
+
+  throw new Error('No auto-sync for this provider');
+}
+
+// ── Sync handler ─────────────────────────────────────────────────
+function setCardSyncStatus(card, type, msg) {
+  const el = card.querySelector('.sync-status');
+  el.className = `sync-status ${type}`;
+  el.textContent = msg;
+}
+
+async function syncAgent(i, live) {
+  const card = document.querySelector(`.card[data-index="${i}"]`);
+  if (!card) return;
+  const btn = card.querySelector(live ? '.btn-sync-live' : '.btn-sync-mock');
+  btn.disabled = true;
+  btn.textContent = '...';
+  setCardSyncStatus(card, 'info', live ? 'Fetching from API...' : 'Generating mock data...');
+
+  try {
+    let result;
+    if (live) {
+      result = await realFetch(mockAgents[i]);
+    } else {
+      result = mockFetch(mockAgents[i]);
+      if (!result) throw new Error('No mock data for this provider');
+    }
+    mockAgents[i] = { ...mockAgents[i], ...result, synced: true };
+    mockSave(mockAgents);
+    agents[i] = { ...agents[i], ...result, model: result.model || agents[i].model, synced: true };
+    renderAll();
+    updateDisplayPreview();
+    setCardSyncStatus(
+      document.querySelector(`.card[data-index="${i}"]`),
+      'ok',
+      live ? 'Live data fetched' : 'Mock data applied'
+    );
+  } catch (err) {
+    const isCors = err instanceof TypeError && err.message.toLowerCase().includes('fetch');
+    setCardSyncStatus(
+      document.querySelector(`.card[data-index="${i}"]`) || card,
+      'err',
+      isCors ? '⚠ CORS blocked — browser cannot reach this API directly' : `⚠ ${err.message}`
+    );
+  } finally {
+    const c2 = document.querySelector(`.card[data-index="${i}"]`) || card;
+    const b2 = c2.querySelector(live ? '.btn-sync-live' : '.btn-sync-mock');
+    if (b2) { b2.disabled = false; b2.textContent = live ? 'Sync Live' : 'Sync Mock'; }
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────
+buildPresetGrid();
+connect();
+loadWifiInfo();
+</script>
+</body>
+</html>

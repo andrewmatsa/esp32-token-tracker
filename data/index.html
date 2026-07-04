@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Token Tracker</h1>
+  <span id="ws-status" class="badge offline">Offline</span>
+</header>
+
+<main id="agent-list"></main>
+
+<button id="btn-add" onclick="openPresetModal()">+ Add Agent</button>
+
+<footer id="wifi-footer">
+  <span id="wifi-info">WiFi: —</span>
+  <button id="btn-wifi-reset" onclick="resetWifi()">Change WiFi</button>
+</footer>
+
+<!-- ── Preset picker modal ──────────────────────────────────────────────── -->
+<div id="preset-modal" hidden>
+  <div class="modal-box">
+    <div class="modal-header">
+      <span>Choose a platform</span>
+      <button class="modal-close" onclick="closePresetModal()">✕</button>
+    </div>
+    <div class="preset-grid" id="preset-grid"></div>
+  </div>
+</div>
+
+<!-- ── Agent card template ─────────────────────────────────────────────── -->
+<template id="tpl-card">
+  <div class="card" data-index="" data-platform="" data-unit="tokens">
+    <div class="card-header">
+      <span class="platform-icon"></span>
+      <div class="card-title">
+        <span class="platform-name"></span>
+        <span class="detected-model" hidden></span>
+      </div>
+      <div class="card-actions">
+        <button class="btn-save">Save</button>
+        <button class="btn-delete">Delete</button>
+      </div>
+      <label class="enabled-toggle">
+        <input type="checkbox" class="inp-enabled" checked>
+        <span>Enabled</span>
+      </label>
+    </div>
+
+    <div class="apikey-row">
+      <input class="inp-apikey" type="password" placeholder="API key (required — needed to fetch data)">
+    </div>
+
+    <div class="claude-config-row" hidden>
+      <label>Model
+        <input class="inp-model" type="text" placeholder="Default / all models">
+      </label>
+      <label>Update every (sec)
+        <input class="inp-interval" type="number" min="10" placeholder="120">
+      </label>
+    </div>
+
+  </div>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
