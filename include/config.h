@@ -4,6 +4,14 @@
 #define AP_SSID_PREFIX          "TokenTracker-"
 #define WIFI_CONNECT_TIMEOUT_S  15
 
+// ─── TEMPORARY: STA TX diagnostic ────────────────────────────────────────────
+// Fill in your real WiFi credentials here, flash, watch Serial Monitor, then
+// delete/blank these again — this file is not meant to carry real
+// credentials long-term. Leave TEST_STA_SSID empty to skip the diagnostic
+// entirely (normal captive-portal boot).
+#define TEST_STA_SSID  ""
+#define TEST_STA_PASS  ""
+
 // ─── Display SPI pins (ESP32-C3 Super Mini → ST7789 240x240) ─────────────────
 #define PIN_SCLK  4
 #define PIN_MOSI  6

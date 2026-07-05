@@ -119,6 +119,27 @@ void setup() {
         Serial.println("[BOOT] SPIFFS mount failed");
     }
 
+    // TEMPORARY: one-off STA TX diagnostic — see include/config.h. Tests
+    // whether the radio can actually transmit and complete a real
+    // association, independent of the (possibly broken) AP/beacon path.
+    // Does not affect normal boot when TEST_STA_SSID is left blank.
+    if (strlen(TEST_STA_SSID) > 0) {
+        Serial.printf("[DIAG] Attempting STA connect to '%s'...\n", TEST_STA_SSID);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(TEST_STA_SSID, TEST_STA_PASS);
+        uint32_t deadline = millis() + 15000UL;
+        while (WiFi.status() != WL_CONNECTED && millis() < deadline) delay(200);
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("[DIAG] STA connected! IP=%s RSSI=%d\n",
+                          WiFi.localIP().toString().c_str(), WiFi.RSSI());
+        } else {
+            Serial.printf("[DIAG] STA connect FAILED, status=%d\n", (int)WiFi.status());
+        }
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(200);
+    }
+
     String apSsid = wifi_makeApSsid();
 
     // Try stored credentials; fall back to captive portal (blocks + restarts)
