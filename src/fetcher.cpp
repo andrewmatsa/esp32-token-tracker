@@ -211,6 +211,13 @@ static bool syncAnthropic(Agent& agent) {
     http.addHeader("anthropic-version", "2023-06-01");
     http.addHeader("anthropic-beta", "oauth-2025-04-20"); // required for Bearer/OAuth auth
     http.addHeader("Content-Type", "application/json");
+    // Anthropic's API sits behind Cloudflare (visible in the response
+    // headers on every 401 so far) — HTTPClient's default UA is blank/
+    // generic, which Cloudflare (and possibly Anthropic's own OAuth-client
+    // check) may reject outright before the request is even evaluated.
+    // Neutral, not spoofing the real Claude Code CLI UA (unknown, and
+    // pretending to be it would look like impersonation).
+    http.addHeader("User-Agent", "token-tracker-esp32/1.0");
     http.setTimeout(8000);
 
     // agent.model doubles as the user-configurable probe model for Claude
