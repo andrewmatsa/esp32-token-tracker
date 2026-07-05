@@ -13,7 +13,7 @@
 #define C_RED       TFT_RED
 #define C_DARKRED   0x6000
 #define C_BAR_BG    0x2945          // dark bar background
-#define C_WIFI      0x07FF          // cyan dot for WiFi indicator
+#define C_WIFI      0xFD20          // WiFi indicator dot — orange, not blue/cyan (project palette: orange/grey/white/black only)
 #define C_SPRITE    0xDBAA          // Claude sprite terracotta (~#d97757)
 #define C_PILL_BG   0x394A          // Claude usage pill background (~#3a2b52)
 #define C_PILL_TXT  0xCD5F          // Claude usage pill text (~#c9a8ff)
@@ -371,12 +371,12 @@ void display_renderIdle(const char* ip) {
     tft.setTextColor(C_TEXT, C_HEADER);
     tft.drawString("Token Tracker", 120, 28);
 
-    tft.setTextFont(2);
+    tft.setTextFont(4);
     tft.setTextColor(C_SUBTEXT, C_BG);
-    tft.drawString("No active agent", 120, 120);
+    tft.drawString("No active agent", 120, 115);
 
-    tft.setTextFont(1);
-    tft.setTextColor(C_WIFI, C_BG);
+    tft.setTextFont(2);
+    tft.setTextColor(C_ORANGE, C_BG);
     char urlBuf[32];
     snprintf(urlBuf, sizeof(urlBuf), "http://%s", ip);
     tft.drawString(urlBuf, 120, 160);
