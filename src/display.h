@@ -19,5 +19,10 @@ void display_tick(const Agent* agent, uint32_t nowEpoch);
 // Render the WiFi setup screen (AP mode). Shows AP SSID and 192.168.4.1.
 void display_renderWifiSetup(const char* apSsid);
 
+// Advance the "waiting for you" bouncing-dots animation on the WiFi setup
+// screen. Call periodically (e.g. every ANIM_INTERVAL_MS) while blocked in
+// the setup portal's connection-wait loop.
+void display_tickWifiSetup();
+
 // Render the connecting screen with a text spinner.
 void display_renderConnecting(const char* ssid);

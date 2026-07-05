@@ -180,10 +180,16 @@ void wifi_runSetupPortal(const char* apSsid) {
 
     portalServer.begin();
 
-    // Block until connected, keep DNS running
+    // Block until connected, keep DNS running and the waiting-dots
+    // animation moving so the screen doesn't look frozen.
+    uint32_t lastAnim = millis();
     while (!connected) {
         dns.processNextRequest();
         delay(10);
+        if (millis() - lastAnim >= ANIM_INTERVAL_MS) {
+            lastAnim = millis();
+            display_tickWifiSetup();
+        }
     }
 
     // Small delay so browser receives the success response before restart

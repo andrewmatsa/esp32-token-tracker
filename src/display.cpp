@@ -448,6 +448,28 @@ void display_renderWifiSetup(const char* apSsid) {
     tft.setTextFont(4);
     tft.setTextColor(C_GREEN, C_BG);
     tft.drawString("192.168.4.1", 120, 175);
+
+    tft.setTextFont(2);
+    tft.setTextColor(C_SUBTEXT, C_BG);
+    tft.drawString("Waiting for you", 120, 205);
+}
+
+// ─── Waiting-dots animation for the WiFi setup screen ────────────────────────
+// Call periodically (e.g. every ANIM_INTERVAL_MS) while blocked waiting for
+// the user to submit the setup form — same bouncing-dot language as the
+// browser UI's loading indicator, so the two feel consistent.
+static uint8_t _wifiDotPhase = 0;
+
+void display_tickWifiSetup() {
+    const int y = 222;
+    const int cx[3] = {105, 120, 135};
+
+    tft.fillRect(90, y - 8, 60, 16, C_BG); // erase previous frame
+    for (int i = 0; i < 3; i++) {
+        bool active = (i == _wifiDotPhase);
+        tft.fillCircle(cx[i], y, active ? 5 : 3, active ? C_GREEN : C_SUBTEXT);
+    }
+    _wifiDotPhase = (_wifiDotPhase + 1) % 3;
 }
 
 void display_renderConnecting(const char* ssid) {
