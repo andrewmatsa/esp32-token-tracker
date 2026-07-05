@@ -105,8 +105,13 @@ void wifi_runSetupPortal(const char* apSsid) {
     AsyncWebServer portalServer(80);
     volatile bool  connected = false;
 
-    // Serve setup page
-    portalServer.serveStatic("/", SPIFFS, "/wifi-setup.html")
+    // Serve setup page. The path arg must be the directory ("/"), not the
+    // file itself — passing "/wifi-setup.html" here made the library look
+    // for "/wifi-setup.html/wifi-setup.html" (path + default file appended),
+    // which doesn't exist, so canHandle() always failed and requests fell
+    // through to onNotFound's redirect-to-"/" below — an infinite redirect
+    // loop that renders as a blank page in the browser.
+    portalServer.serveStatic("/", SPIFFS, "/")
                 .setDefaultFile("wifi-setup.html");
     portalServer.serveStatic("/style.css", SPIFFS, "/style.css");
 
