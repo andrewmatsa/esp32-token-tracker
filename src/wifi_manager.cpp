@@ -97,6 +97,20 @@ void wifi_runSetupPortal(const char* apSsid) {
     WiFi.mode(WIFI_OFF);
     delay(200);
 
+    // One-off diagnostic: if softAP still isn't visible to clients despite
+    // reporting success, this tells us whether the radio/antenna can
+    // receive anything at all (rules hardware in/out) before we blame the
+    // AP-specific code path.
+    WiFi.mode(WIFI_STA);
+    int seen = WiFi.scanNetworks();
+    Serial.printf("[AP] Pre-flight scan found %d network(s) nearby\n", seen);
+    for (int i = 0; i < seen; i++) {
+        Serial.printf("[AP]   - %s (RSSI %d)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+    }
+    WiFi.scanDelete();
+    WiFi.mode(WIFI_OFF);
+    delay(200);
+
     WiFi.mode(WIFI_AP);
     bool apOk = WiFi.softAP(apSsid);
     delay(100);
