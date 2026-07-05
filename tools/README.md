@@ -22,7 +22,14 @@ indexes are `0`, `1`, `2`.
 ## 3. Add the agents with an empty API key (Claude/Codex) or a pasted key (Cursor)
 
 - **Claude**: add a "Claude" agent, leave the API key field empty — all its
-  data comes from this daemon's pushes.
+  data comes from this daemon's pushes. **Alternative (no daemon/PC needed
+  at all):** run `claude setup-token` once on any machine with the CLI
+  logged in — this mints a long-lived OAuth token — and paste its output
+  directly into the device's API key field instead. The device then syncs
+  Claude on its own forever, the same way it already does for OpenAI/
+  DeepSeek/Cursor. A regular `sk-ant-api03-...` developer API key does
+  *not* work here — the device authenticates as an OAuth session
+  specifically to read the Pro/Max plan's rate-limit headers.
 - **Codex**: add a "Codex" agent — the API key field is disabled entirely
   (there's no key at all; usage comes from Codex CLI's own local login).
 - **Cursor**: works either way — paste the access token directly into the

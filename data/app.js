@@ -297,6 +297,13 @@ function buildCard(ag, i) {
 
   // API key — show placeholder dots if key already stored on device
   const keyInput = card.querySelector('.inp-apikey');
+  if (isAnthropic(ag.name) && !ag.hasKey) {
+    // The device authenticates as an OAuth session (needed to read the
+    // Pro/Max plan's 5h/7d rate-limit headers) — a regular sk-ant-...
+    // developer API key is rejected. Run `claude setup-token` once on any
+    // machine with the CLI logged in and paste its output here.
+    keyInput.placeholder = "OAuth token from 'claude setup-token' — NOT a regular sk-ant-... API key";
+  }
   if (ag.hasKey) keyInput.placeholder = '••••••••  (saved — enter new key to replace)';
   if (isCodex(ag.name)) {
     keyInput.placeholder = 'No key needed — reads local Codex CLI login (see tools/usage-daemon.py)';
