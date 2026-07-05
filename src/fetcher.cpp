@@ -183,6 +183,21 @@ static bool syncAnthropic(Agent& agent) {
 
     if (!http.begin(client, "https://api.anthropic.com/v1/messages")) return false;
 
+    // TEMPORARY diagnostic: confirm the stored token's length/shape without
+    // ever printing the token itself. A genuine `claude setup-token` OAuth
+    // token is a single unbroken string with a recognizable prefix
+    // (typically "sk-ant-oat01-...") — if the length looks too short, or
+    // first/last chars look wrong, the paste likely picked up extra text
+    // or got cut off client-side before it ever reached the device.
+    {
+        int   len = strlen(agent.apiKey);
+        char  head[16] = {0}, tail[16] = {0};
+        strncpy(head, agent.apiKey, min(len, 12));
+        if (len > 12) strncpy(tail, agent.apiKey + len - 8, 8);
+        Serial.printf("[FETCH] Anthropic: stored key len=%d, starts '%s...', ends '...%s'\n",
+                      len, head, tail);
+    }
+
     static const char* headerKeys[] = {
         "anthropic-ratelimit-unified-5h-utilization",
         "anthropic-ratelimit-unified-5h-reset",
