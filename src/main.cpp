@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <SPIFFS.h>
 #include <time.h>
+#include <esp_log.h>
 #include "config.h"
 #include "storage.h"
 #include "display.h"
@@ -111,6 +112,12 @@ void setup() {
     Serial.begin(115200);
     delay(300);
     Serial.println("[BOOT] Token Tracker starting");
+
+    // TEMPORARY: surface the esp-idf WiFi driver's own internal log lines
+    // (auth/assoc failures, RF init) instead of only Arduino's WiFi.h
+    // status codes, while diagnosing the AP/STA transmit issue.
+    esp_log_level_set("wifi", ESP_LOG_VERBOSE);
+    esp_log_level_set("wifi_init", ESP_LOG_VERBOSE);
 
     display_init();
 
