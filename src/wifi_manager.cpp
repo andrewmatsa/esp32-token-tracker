@@ -7,7 +7,6 @@
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
-#include <ArduinoJson.h>
 
 static const char NVS_NS[]   = "wifi";
 static const char KEY_SSID[] = "ssid";
@@ -148,22 +147,6 @@ void wifi_runSetupPortal(const char* apSsid) {
     portalServer.on("/connecttest.txt",     HTTP_GET, redirect);
     portalServer.on("/ncsi.txt",            HTTP_GET, redirect);
     portalServer.onNotFound([&](AsyncWebServerRequest* req){ req->redirect("http://192.168.4.1/"); });
-
-    // WiFi scan endpoint
-    portalServer.on("/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
-        int n = WiFi.scanNetworks(false, false);
-        JsonDocument doc;
-        JsonArray arr = doc.to<JsonArray>();
-        for (int i = 0; i < n; i++) {
-            JsonObject o = arr.add<JsonObject>();
-            o["ssid"] = WiFi.SSID(i);
-            o["rssi"] = WiFi.RSSI(i);
-            o["enc"]  = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-        }
-        String out;
-        serializeJson(doc, out);
-        req->send(200, "application/json", out);
-    });
 
     // Save credentials endpoint
     portalServer.on("/wifi/save", HTTP_POST, [&](AsyncWebServerRequest* req) {

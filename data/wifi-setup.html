@@ -10,14 +10,12 @@
   .setup-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; width: 100%; max-width: 400px; }
   h2 { font-size: 1.3rem; margin-bottom: 20px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; font-size: 0.8rem; color: var(--sub); }
-  .field input, .field select {
+  .field input {
     background: #222; border: 1px solid var(--border); border-radius: 8px;
     color: var(--text); padding: 10px 12px; font-size: 1rem;
   }
-  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
-  .btn-row { display: flex; gap: 10px; margin-top: 8px; }
-  #btn-scan { background: var(--border); color: var(--sub); flex: 0 0 auto; }
-  #btn-save { background: var(--accent); color: #fff; flex: 1; padding: 12px; font-size: 1rem; }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  #btn-save { background: var(--accent); color: #fff; width: 100%; padding: 12px; font-size: 1rem; margin-top: 8px; }
   #msg { margin-top: 16px; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; display: none; }
   #msg.ok  { background: #14532d; color: var(--green); }
   #msg.err { background: #450a0a; color: var(--red); }
@@ -29,17 +27,7 @@
   <h2>WiFi Setup</h2>
 
   <div class="field">
-    <label for="sel-ssid">Network (SSID)</label>
-    <div class="btn-row" style="margin:0">
-      <select id="sel-ssid" style="flex:1">
-        <option value="">— press Scan or type below —</option>
-      </select>
-      <button id="btn-scan" onclick="scan()">Scan</button>
-    </div>
-  </div>
-
-  <div class="field">
-    <label for="inp-ssid">Or type SSID manually</label>
+    <label for="inp-ssid">Network (SSID)</label>
     <input id="inp-ssid" type="text" placeholder="Network name" autocomplete="off" spellcheck="false">
   </div>
 
@@ -56,31 +44,15 @@
 </div>
 
 <script>
-  const selSsid  = document.getElementById('sel-ssid');
   const inpSsid  = document.getElementById('inp-ssid');
   const inpPass  = document.getElementById('inp-pass');
   const msgEl    = document.getElementById('msg');
   const spinner  = document.getElementById('spinner');
 
-  selSsid.onchange = () => { if (selSsid.value) inpSsid.value = selSsid.value; };
-
-  async function scan() {
-    selSsid.innerHTML = '<option>Scanning…</option>';
-    try {
-      const res  = await fetch('/scan');
-      const nets = await res.json();
-      nets.sort((a, b) => b.rssi - a.rssi);
-      selSsid.innerHTML = '<option value="">— select —</option>' +
-        nets.map(n => `<option value="${esc(n.ssid)}">${esc(n.ssid)}${n.enc ? ' 🔒' : ''} (${n.rssi} dBm)</option>`).join('');
-    } catch {
-      selSsid.innerHTML = '<option>Scan failed</option>';
-    }
-  }
-
   async function save() {
-    const ssid = inpSsid.value.trim() || selSsid.value;
+    const ssid = inpSsid.value.trim();
     const pass = inpPass.value;
-    if (!ssid) { showMsg('Please enter or select a network.', false); return; }
+    if (!ssid) { showMsg('Please enter a network name.', false); return; }
 
     spinner.style.display = 'block';
     msgEl.style.display   = 'none';
@@ -109,13 +81,6 @@
     msgEl.className    = ok ? 'ok' : 'err';
     msgEl.style.display = 'block';
   }
-
-  function esc(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  // Auto-scan on load
-  scan();
 </script>
 </body>
 </html>
