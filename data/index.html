@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -8,19 +7,32 @@
 </head>
 <body>
 
-<header>
-  <h1>Token Tracker</h1>
-  <span id="ws-status" class="badge offline">Offline</span>
-</header>
+<div id="layout">
+  <div id="main-col">
+    <header>
+      <h1>Token Tracker</h1>
+      <span id="ws-status" class="badge offline">Offline</span>
+    </header>
 
-<main id="agent-list"></main>
+    <main id="agent-list"></main>
 
-<button id="btn-add" onclick="openPresetModal()">+ Add Agent</button>
+    <button id="btn-add" onclick="openPresetModal()">+ Add Agent</button>
 
-<footer id="wifi-footer">
-  <span id="wifi-info">WiFi: —</span>
-  <button id="btn-wifi-reset" onclick="resetWifi()">Change WiFi</button>
-</footer>
+    <footer id="wifi-footer">
+      <span id="wifi-info">WiFi: —</span>
+      <button id="btn-wifi-reset" onclick="resetWifi()">Change WiFi</button>
+    </footer>
+  </div>
+
+  <div id="display-col">
+    <div id="display-wrap">
+      <h3>ESP32 Display Preview</h3>
+      <div id="esp-display">
+        <div class="disp-idle"><div style="font-size:20px">📟</div><div>No active agent</div></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Preset picker modal ──────────────────────────────────────────────── -->
 <div id="preset-modal" hidden>

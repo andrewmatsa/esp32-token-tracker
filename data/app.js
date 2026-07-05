@@ -46,10 +46,19 @@ function isAnthropic(name) {
 }
 function isCursor(name) { return (name || '').toLowerCase().startsWith('cursor'); }
 function isCodex(name) { return (name || '').toLowerCase().startsWith('codex'); }
+function isOpenAI(name) {
+  const n = (name || '').toLowerCase();
+  return n.startsWith('gpt') || n.startsWith('openai') || n.startsWith('o1') || n.startsWith('o3');
+}
+function isDeepSeek(name) { return (name || '').toLowerCase().startsWith('deepseek'); }
 // Providers whose usage endpoint reports data per-model, so the user can
 // filter the probe/sync to a single model (free text — bucket names are
 // account-specific and can't be listed in a fixed dropdown).
 function hasModelPicker(name) { return isAnthropic(name) || isCursor(name) || isCodex(name); }
+// Providers whose data has two rate-limit windows (short + long), rendered
+// as two cards instead of one on the display preview.
+function hasDualWindow(agent) { return isAnthropic(agent.name) || (isCodex(agent.name) && !agent.model); }
+function hasAutoSync(name) { return isOpenAI(name) || isDeepSeek(name) || isAnthropic(name) || isCursor(name) || isCodex(name); }
 
 function presetFor(name) {
   const lower = (name || '').toLowerCase();
@@ -128,6 +137,144 @@ function renderAll() {
   const list = document.getElementById('agent-list');
   list.innerHTML = '';
   agents.forEach((ag, i) => list.appendChild(buildCard(ag, i)));
+  updateDisplayPreview();
+  startCountdowns();
+}
+
+// ─── ESP32 display preview — mirrors display.cpp's adaptive render logic ────
+let countdownInterval = null;
+
+function startCountdowns() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(updateDisplayPreview, 1000);
+}
+
+function formatTokens(v) {
+  if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+  if (v >= 1000)    return (v / 1000).toFixed(1) + 'K';
+  return String(v);
+}
+
+function formatCountdown(secs) {
+  if (secs <= 0) return 'due';
+  if (secs >= 86400) return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
+  if (secs >= 3600)  return `${Math.floor(secs / 3600)}h ${String(Math.floor((secs % 3600) / 60)).padStart(2, '0')}m`;
+  return `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
+}
+
+function usageBarColor(pct) {
+  return pct >= 85 ? '#ef4444' : pct >= 50 ? '#f97316' : '#22c55e';
+}
+
+function resetLineFor(resetEpoch) {
+  if (!resetEpoch) return '';
+  const now = Math.floor(Date.now() / 1000);
+  return resetEpoch > now ? 'Resets in ' + formatCountdown(resetEpoch - now) : 'Reset due';
+}
+
+// Claude keeps its distinctive pixel-art sprite; every other provider uses
+// its own preset.icon character instead.
+function claudeSpriteSvg(color) {
+  return `
+    <svg class="disp-usage-sprite disp-usage-sprite-svg" width="33" height="18" viewBox="0 0 9 5" shape-rendering="crispEdges">
+      <rect x="1" y="0" width="7" height="1" fill="${color}"/>
+      <rect x="1" y="1" width="1" height="1" fill="${color}"/>
+      <rect x="3" y="1" width="3" height="1" fill="${color}"/>
+      <rect x="7" y="1" width="1" height="1" fill="${color}"/>
+      <rect x="0" y="2" width="9" height="1" fill="${color}"/>
+      <rect x="1" y="3" width="7" height="1" fill="${color}"/>
+      <rect x="1" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="3" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="5" y="4" width="1" height="1" fill="${color}"/>
+      <rect x="7" y="4" width="1" height="1" fill="${color}"/>
+    </svg>`;
+}
+
+// Remembers the last rendered value per card slot (`key`) so a changed
+// number can be flashed — updateDisplayPreview() re-renders this innerHTML
+// wholesale on every tick, so comparing against the DOM isn't an option.
+let prevUsageValues = {};
+
+function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine) {
+  const changed = prevUsageValues[key] !== undefined && prevUsageValues[key] !== bigValueText;
+  prevUsageValues[key] = bigValueText;
+  return `
+    <div class="disp-usage-card${changed ? ' is-updated' : ''}">
+      <div class="disp-usage-row1">
+        <span class="disp-usage-pct${changed ? ' is-updated' : ''}">${bigValueText}</span>
+        <span class="disp-usage-pill">${pillLabel}</span>
+      </div>
+      <div class="disp-usage-bar-wrap"><div class="disp-usage-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      <div class="disp-usage-reset">${resetLine}</div>
+    </div>`;
+}
+
+function renderUsageScreen(active, preset) {
+  let cards;
+
+  if (active.enabled === false) {
+    cards = `
+      <div style="text-align:center;font-size:16px;color:#666;font-weight:bold;margin-top:14px">Disabled</div>
+      <div class="disp-syncing">Auto-sync paused</div>`;
+  } else if (hasDualWindow(active)) {
+    const pct5h = Math.min(100, Math.max(0, active.used || 0));
+    const pct7d = Math.min(100, Math.max(0, active.used7d || 0));
+    cards = renderUsageCard(`${active.name}:current`, 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch)) +
+            renderUsageCard(`${active.name}:weekly`,  'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
+  } else {
+    const hasLimit   = active.limit > 0;
+    const hasUsed    = active.used > 0;
+    const hasBalance = active.balance != null && active.balance >= 0;
+    const resetLine  = resetLineFor(active.resetEpoch);
+
+    if (hasLimit) {
+      const pct = Math.min(100, Math.round(active.used * 100 / active.limit));
+      cards = renderUsageCard(`${active.name}:monthly`, 'Monthly', pct + '%', pct, usageBarColor(pct), resetLine);
+    } else if (hasUsed) {
+      cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine);
+    } else if (hasBalance) {
+      cards = renderUsageCard(`${active.name}:balance`, 'Balance', '$' + active.balance.toFixed(2), 100, preset.color, resetLine);
+    } else if (active.resetEpoch > 0) {
+      // No usage/limit/balance, but a reset time is set — a fetch already
+      // completed and legitimately found zero usage (the real device has
+      // no separate "synced" flag, so resetEpoch>0 is the proxy for that).
+      cards = renderUsageCard(`${active.name}:used`, 'Used', '0', 0, preset.color, resetLine);
+    } else {
+      const statusText = hasAutoSync(active.name) ? 'Syncing' : 'No auto-sync';
+      cards = `
+        <div style="text-align:center;font-size:16px;color:#22c55e;font-weight:bold;margin-top:14px">Active</div>
+        <div class="disp-syncing">${statusText}</div>`;
+    }
+  }
+
+  if (active.enabled !== false && hasAutoSync(active.name)) {
+    cards += `<div class="disp-loading-dots" style="color:${preset.color}"><span></span><span></span><span></span></div>`;
+  }
+
+  const sprite = isAnthropic(active.name)
+    ? claudeSpriteSvg(preset.color)
+    : `<span class="disp-usage-sprite" style="color:${preset.color}">${preset.icon}</span>`;
+
+  return `
+    <div class="disp-usage-wrap">
+      <div class="disp-usage-header">
+        ${sprite}
+        <span class="disp-usage-title">${active.name}</span>
+      </div>
+      ${cards}
+    </div>`;
+}
+
+function updateDisplayPreview() {
+  const disp   = document.getElementById('esp-display');
+  const active = agents.find(a => a.active);
+
+  if (!active) {
+    disp.innerHTML = `<div class="disp-idle"><div style="font-size:20px">📟</div><div>No active agent</div></div>`;
+    return;
+  }
+
+  disp.innerHTML = renderUsageScreen(active, presetFor(active.name));
 }
 
 function buildCard(ag, i) {
