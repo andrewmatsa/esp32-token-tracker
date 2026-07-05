@@ -422,14 +422,16 @@ void display_tick(const Agent* agent, uint32_t nowEpoch) {
     drawCountdown(agent->resetEpoch, nowEpoch, 201, warn || nearReset);
 }
 
+// Palette restricted to orange / grey / black / white only — no green, red,
+// cyan, or blue anywhere on this screen.
 void display_renderWifiSetup(const char* apSsid) {
     tft.fillScreen(C_BG);
 
     // Header
-    tft.fillRect(0, 0, 240, 50, 0x0010);   // dark blue
+    tft.fillRect(0, 0, 240, 50, C_HEADER);   // dark grey
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4);
-    tft.setTextColor(C_TEXT, 0x0010);
+    tft.setTextColor(C_TEXT, C_HEADER);
     tft.drawString("WiFi Setup", 120, 25);
 
     // Instructions
@@ -438,7 +440,7 @@ void display_renderWifiSetup(const char* apSsid) {
     tft.drawString("Connect to:", 120, 75);
 
     tft.setTextFont(2);
-    tft.setTextColor(C_WIFI, C_BG);
+    tft.setTextColor(C_ORANGE, C_BG);
     tft.drawString(apSsid, 120, 100);
 
     tft.setTextFont(4);
@@ -446,7 +448,7 @@ void display_renderWifiSetup(const char* apSsid) {
     tft.drawString("Then open:", 120, 140);
 
     tft.setTextFont(4);
-    tft.setTextColor(C_GREEN, C_BG);
+    tft.setTextColor(C_ORANGE, C_BG);
     tft.drawString("192.168.4.1", 120, 175);
 
     tft.setTextFont(2);
@@ -467,7 +469,7 @@ void display_tickWifiSetup() {
     tft.fillRect(90, y - 8, 60, 16, C_BG); // erase previous frame
     for (int i = 0; i < 3; i++) {
         bool active = (i == _wifiDotPhase);
-        tft.fillCircle(cx[i], y, active ? 5 : 3, active ? C_GREEN : C_SUBTEXT);
+        tft.fillCircle(cx[i], y, active ? 5 : 3, active ? C_ORANGE : C_SUBTEXT);
     }
     _wifiDotPhase = (_wifiDotPhase + 1) % 3;
 }
@@ -489,7 +491,7 @@ void display_renderConnecting(const char* ssid) {
     static uint8_t frame = 0;
     const char* frames[] = {"[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]", "[ ===]", "[  ==]", "[   =]"};
     tft.setTextFont(2);
-    tft.setTextColor(C_WIFI, C_BG);
+    tft.setTextColor(C_ORANGE, C_BG);
     tft.drawString(frames[frame % 8], 120, 140);
     frame++;
 }
