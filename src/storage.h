@@ -5,7 +5,11 @@
 struct Agent {
     char     name[32];       // display name: "Claude", "Cursor", "Codex"
     char     model[48];      // model id: "claude-opus-4-8", "gpt-4o"; for Claude, user-editable probe model
-    char     apiKey[128];    // stored on device, used for auto-fetch; never sent back to browser
+    char     apiKey[512];    // stored on device, used for auto-fetch; never sent back to browser.
+                             // 512, not 128 — Claude Code OAuth tokens (from `claude setup-token`)
+                             // are long JWT-style strings, routinely 300-1000+ chars; a smaller
+                             // buffer silently truncated them via strlcpy() in webserver.cpp,
+                             // producing a corrupted token that Anthropic rejects with HTTP 401.
     uint32_t used;           // tokens consumed (auto-fetched when possible), or Claude's 5h-window %
     uint32_t limit;          // token budget (0 = unknown), or 100 for Claude's 5h-window %
     uint32_t resetEpoch;     // unix timestamp of next reset (auto-computed or 0)
