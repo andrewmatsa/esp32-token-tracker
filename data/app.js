@@ -68,6 +68,11 @@ function presetFor(name) {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let agents = [];
+// Index of the card that was just saved — flashed briefly in buildCard()
+// as immediate feedback, since the actual WS round-trip is fire-and-forget
+// and the user otherwise has no confirmation anything happened.
+let justSavedIndex = null;
+let justSavedTimer = null;
 let ws     = null;
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
@@ -286,6 +291,8 @@ function buildCard(ag, i) {
   card.dataset.platform = preset.id;
   card.style.setProperty('--pc', preset.color);
 
+  if (justSavedIndex === i) card.classList.add('just-saved');
+
   // Header
   card.querySelector('.platform-icon').textContent = preset.icon;
   card.querySelector('.platform-name').textContent = ag.name;
@@ -295,18 +302,28 @@ function buildCard(ag, i) {
   const modelEl = card.querySelector('.detected-model');
   if (ag.model && !hasModelPicker(ag.name)) { modelEl.textContent = ag.model; modelEl.hidden = false; }
 
-  // API key — show placeholder dots if key already stored on device
+  // API key — provider-specific hints on exactly how to obtain and add one,
+  // shown until a key is actually saved (see tools/README.md for the
+  // full walkthrough of each option).
   const keyInput = card.querySelector('.inp-apikey');
-  if (isAnthropic(ag.name) && !ag.hasKey) {
-    // The device authenticates as an OAuth session (needed to read the
-    // Pro/Max plan's 5h/7d rate-limit headers) — a regular sk-ant-...
-    // developer API key is rejected. Run `claude setup-token` once on any
-    // machine with the CLI logged in and paste its output here.
-    keyInput.placeholder = "OAuth token from 'claude setup-token' — NOT a regular sk-ant-... API key";
+  if (!ag.hasKey) {
+    if (isAnthropic(ag.name)) {
+      // The device authenticates as an OAuth session (needed to read the
+      // Pro/Max plan's 5h/7d rate-limit headers) — a regular sk-ant-...
+      // developer API key is rejected. Run `claude setup-token` once on any
+      // machine with the CLI logged in and paste its output here.
+      keyInput.placeholder = "Run 'claude setup-token' locally, paste the OAuth token here (not a sk-ant-... API key)";
+    } else if (isCursor(ag.name)) {
+      // The token lives in Cursor IDE's local session database, not
+      // anywhere a user would normally see it — no simple CLI command like
+      // Claude's, so point at the daemon as the practical way to get it.
+      keyInput.placeholder = "Paste Cursor's access token, or leave empty and run: python tools/usage-daemon.py --push cursor:N";
+    } else if (isCodex(ag.name)) {
+      keyInput.placeholder = 'No key needed here — run: python tools/usage-daemon.py --push codex:N (reads local Codex CLI login)';
+    }
   }
   if (ag.hasKey) keyInput.placeholder = '••••••••  (saved — enter new key to replace)';
   if (isCodex(ag.name)) {
-    keyInput.placeholder = 'No key needed — reads local Codex CLI login (see tools/usage-daemon.py)';
     keyInput.disabled = true;
   }
 
@@ -331,7 +348,9 @@ function buildCard(ag, i) {
   enabledInput.onchange = () => setEnabled(i, enabledInput.checked);
 
   // Buttons
-  card.querySelector('.btn-save').onclick   = () => saveAgent(i);
+  const saveBtn = card.querySelector('.btn-save');
+  if (justSavedIndex === i) saveBtn.textContent = 'Saved ✓';
+  saveBtn.onclick = () => saveAgent(i);
   card.querySelector('.btn-delete').onclick = () => deleteAgent(i);
 
   // Clicking the card itself (outside inputs/buttons) makes it the active
@@ -362,6 +381,16 @@ function saveAgent(i) {
   }
 
   send(msg);
+
+  // Immediate "Saved" feedback — the WS update is fire-and-forget, so
+  // without this the user has no confirmation anything happened. Shown for
+  // a couple seconds, surviving the state-broadcast re-render that follows
+  // shortly after (renderAll() reads justSavedIndex every time it rebuilds
+  // the cards).
+  justSavedIndex = i;
+  if (justSavedTimer) clearTimeout(justSavedTimer);
+  justSavedTimer = setTimeout(() => { justSavedIndex = null; renderAll(); }, 2000);
+  renderAll();
 }
 
 function setActive(i)   { send({ type: 'setActive', index: i }); }

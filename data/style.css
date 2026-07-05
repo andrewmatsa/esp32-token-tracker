@@ -63,6 +63,12 @@ h1 { font-size: 1.4rem; font-weight: 700; }
 .card.is-warning { border-color: var(--orange); }
 .card.is-maxed   { border-color: var(--red); }
 .card.is-disabled { opacity: 0.5; }
+.card.just-saved { animation: savedFlash 2s ease-out; }
+@keyframes savedFlash {
+  0%   { box-shadow: 0 0 0 2px var(--green); }
+  80%  { box-shadow: 0 0 0 2px var(--green); }
+  100% { box-shadow: 0 0 0 0px transparent; }
+}
 
 /* ── Card header ── */
 .card-header {
