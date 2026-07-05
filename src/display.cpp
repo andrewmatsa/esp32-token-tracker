@@ -433,17 +433,17 @@ void display_renderWifiSetup(const char* apSsid) {
     tft.drawString("WiFi Setup", 120, 25);
 
     // Instructions
-    tft.setTextFont(2);
+    tft.setTextFont(4);
     tft.setTextColor(C_SUBTEXT, C_BG);
-    tft.drawString("Connect to:", 120, 80);
+    tft.drawString("Connect to:", 120, 75);
 
     tft.setTextFont(2);
     tft.setTextColor(C_WIFI, C_BG);
-    tft.drawString(apSsid, 120, 105);
+    tft.drawString(apSsid, 120, 100);
 
-    tft.setTextFont(2);
+    tft.setTextFont(4);
     tft.setTextColor(C_SUBTEXT, C_BG);
-    tft.drawString("Then open:", 120, 145);
+    tft.drawString("Then open:", 120, 140);
 
     tft.setTextFont(4);
     tft.setTextColor(C_GREEN, C_BG);
