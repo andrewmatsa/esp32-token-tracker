@@ -106,15 +106,19 @@ void wifi_runSetupPortal(const char* apSsid) {
     WiFi.mode(WIFI_AP);
     esp_wifi_set_ps(WIFI_PS_NONE); // disable modem sleep — known to suppress AP beacons on some builds
     bool apOk = WiFi.softAP(apSsid);
+    esp_wifi_set_max_tx_power(84); // 84 = 20.5dBm, the ESP32-C3 max — rule out a low default TX power
     delay(100);
 
     IPAddress apIp(192, 168, 4, 1);
     WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
 
-    Serial.printf("[AP] softAP()=%s IP=%s MAC=%s\n",
+    int8_t txPower = 0;
+    esp_wifi_get_max_tx_power(&txPower);
+    Serial.printf("[AP] softAP()=%s IP=%s MAC=%s txPower=%d (0.25dBm units)\n",
                   apOk ? "ok" : "FAILED",
                   WiFi.softAPIP().toString().c_str(),
-                  WiFi.softAPmacAddress().c_str());
+                  WiFi.softAPmacAddress().c_str(),
+                  (int)txPower);
 
     display_renderWifiSetup(apSsid);
 
