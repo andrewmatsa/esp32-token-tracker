@@ -89,12 +89,25 @@ bool wifi_connect(const char* apSsid) {
 void wifi_runSetupPortal(const char* apSsid) {
     Serial.printf("[AP] Starting portal: %s\n", apSsid);
 
+    // Force a clean radio state before enabling AP mode — starting AP
+    // directly after a prior mode/connect attempt without this reset has
+    // been reported to leave WiFi.softAP() returning true while no beacon
+    // is actually transmitted (arduino-esp32#8736).
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
+
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(apSsid);
+    bool apOk = WiFi.softAP(apSsid);
     delay(100);
 
     IPAddress apIp(192, 168, 4, 1);
     WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
+
+    Serial.printf("[AP] softAP()=%s IP=%s MAC=%s\n",
+                  apOk ? "ok" : "FAILED",
+                  WiFi.softAPIP().toString().c_str(),
+                  WiFi.softAPmacAddress().c_str());
 
     display_renderWifiSetup(apSsid);
 
