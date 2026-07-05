@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <DNSServer.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
@@ -92,26 +93,18 @@ void wifi_runSetupPortal(const char* apSsid) {
     // Force a clean radio state before enabling AP mode — starting AP
     // directly after a prior mode/connect attempt without this reset has
     // been reported to leave WiFi.softAP() returning true while no beacon
-    // is actually transmitted (arduino-esp32#8736).
+    // is actually transmitted (arduino-esp32#8736). A prior version of this
+    // function ran a diagnostic WiFi.scanNetworks() right here to confirm
+    // the radio/antenna could receive at all (it could — 31 nearby networks
+    // seen) — removed now, since arduino-esp32#8736 names that exact
+    // scanNetworks-then-softAP sequence as a trigger for this same
+    // "reports success but never beacons" symptom.
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     delay(200);
 
-    // One-off diagnostic: if softAP still isn't visible to clients despite
-    // reporting success, this tells us whether the radio/antenna can
-    // receive anything at all (rules hardware in/out) before we blame the
-    // AP-specific code path.
-    WiFi.mode(WIFI_STA);
-    int seen = WiFi.scanNetworks();
-    Serial.printf("[AP] Pre-flight scan found %d network(s) nearby\n", seen);
-    for (int i = 0; i < seen; i++) {
-        Serial.printf("[AP]   - %s (RSSI %d)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
-    }
-    WiFi.scanDelete();
-    WiFi.mode(WIFI_OFF);
-    delay(200);
-
     WiFi.mode(WIFI_AP);
+    esp_wifi_set_ps(WIFI_PS_NONE); // disable modem sleep — known to suppress AP beacons on some builds
     bool apOk = WiFi.softAP(apSsid);
     delay(100);
 
