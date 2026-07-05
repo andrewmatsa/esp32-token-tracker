@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 """
-Unified usage daemon for token-tracker (Claude, Cursor, Codex).
+Unified usage daemon for token-tracker (Cursor, Codex).
 
-Each provider stores its own login/token locally (Claude Code's OAuth token,
-Cursor IDE's SQLite state db, Codex CLI's auth.json) and exposes usage via
-its own probe (Anthropic rate-limit headers, Cursor's /auth/usage, Codex's
-/wham/usage). This script reads whichever ones you configure, on one process,
-one port — instead of running three separate scripts.
+Claude is not covered here — it authenticates on-device with a regular
+API key (see the project's tools/README.md), since Anthropic disabled
+OAuth session tokens (`claude setup-token`) for third-party clients
+around February 2026, which is what this daemon's Claude support relied
+on. There's no local-file credential to auto-read for a regular API key,
+so routing it through a daemon adds no value over pasting it directly
+into the device's web UI.
+
+Each remaining provider stores its own login/token locally (Cursor IDE's
+SQLite state db, Codex CLI's auth.json) and exposes usage via its own
+probe (Cursor's /auth/usage, Codex's /wham/usage). This script reads
+whichever ones you configure, on one process, one port — instead of
+running two separate scripts.
 
 Stdlib only — no pip install required.
 
 Push mode — pushes each configured provider to its own agent slot on the
 device, in a single shared loop. Each --push entry is provider:index, or
-provider:index:model to filter Cursor/Codex to one model bucket instead of
-the account-wide total:
-    python usage-daemon.py --ip 192.168.1.50 --push claude:0 cursor:1 codex:2:gpt-4o [--interval 120] [--once]
+provider:index:model to filter to one model bucket instead of the
+account-wide total:
+    python usage-daemon.py --ip 192.168.1.50 --push cursor:1 codex:2:gpt-4o [--interval 120] [--once]
 
 Bridge mode — one local server for browser-based testing (temporary.html),
-serving all three providers on one port via ?provider=:
+serving both providers on one port via ?provider=:
     python usage-daemon.py --serve [--port 8765] [--cache 60]
-    GET http://127.0.0.1:8765/usage?provider=claude[&model=claude-haiku-4-5]
     GET http://127.0.0.1:8765/usage?provider=cursor[&model=gpt-4]
     GET http://127.0.0.1:8765/usage?provider=codex[&model=gpt-4o]
 
@@ -38,7 +45,6 @@ import json
 import os
 import platform
 import sqlite3
-import subprocess
 import sys
 import time
 import urllib.error
@@ -53,111 +59,6 @@ BROWSER_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
-
-
-# ─── Claude ───────────────────────────────────────────────────────────────
-
-def claude_read_token() -> str:
-    system = platform.system()
-    if system == "Darwin":
-        try:
-            out = subprocess.run(
-                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
-            return json.loads(out)["claudeAiOauth"]["accessToken"]
-        except Exception as e:
-            raise RuntimeError(f"Could not read token from macOS Keychain: {e}")
-
-    path = (os.path.expandvars(r"%USERPROFILE%\.claude\.credentials.json") if system == "Windows"
-            else os.path.expanduser("~/.claude/.credentials.json"))
-    if not os.path.exists(path):
-        raise RuntimeError(f"Credentials file not found at {path}. Run `claude` and sign in, or `claude setup-token`.")
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    try:
-        return data["claudeAiOauth"]["accessToken"]
-    except KeyError:
-        raise RuntimeError(f"Unexpected credentials file shape at {path}")
-
-
-def _claude_request(token: str, model: str):
-    """Send the probe request with the given token; return response headers.
-    Raises urllib.error.HTTPError on non-2xx responses other than the
-    rate-limit-headers-on-error case handled by the caller."""
-    body = json.dumps({
-        "model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "."}],
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages", data=body, method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "oauth-2025-04-20",
-            "Content-Type": "application/json",
-            "User-Agent": "token-tracker-usage-daemon/1.0",
-        },
-    )
-    resp = urllib.request.urlopen(req, timeout=15)
-    return resp.headers
-
-
-def claude_list_models(token: str) -> list:
-    """Fetch the real, current model catalog from the API instead of
-    hardcoding IDs — avoids the list going stale as models are added/retired."""
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/models", method="GET",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "oauth-2025-04-20",
-            "User-Agent": "token-tracker-usage-daemon/1.0",
-        },
-    )
-    try:
-        resp = urllib.request.urlopen(req, timeout=15)
-        data = json.loads(resp.read().decode("utf-8"))
-        return [m["id"] for m in data.get("data", []) if m.get("id")]
-    except Exception:
-        return []  # non-fatal — caller falls back to no suggestions
-
-
-def claude_probe(model: str = "claude-haiku-4-5") -> dict:
-    token = claude_read_token()
-    try:
-        headers = _claude_request(token, model)
-    except urllib.error.HTTPError as e:
-        if e.code not in (401, 403):
-            headers = e.headers
-        else:
-            # Token may have been rotated by the `claude` CLI since our first
-            # read — re-read the file fresh and retry exactly once.
-            try:
-                token = claude_read_token()
-                headers = _claude_request(token, model)
-            except urllib.error.HTTPError as e2:
-                if e2.code in (401, 403):
-                    raise RuntimeError(
-                        f"OAuth token rejected (HTTP {e2.code}) — run `claude` once to "
-                        "refresh the session, or `claude setup-token` for a long-lived token"
-                    )
-                headers = e2.headers
-
-    util5h = headers.get("anthropic-ratelimit-unified-5h-utilization")
-    if util5h is None:
-        raise RuntimeError("No rate-limit headers in response — check the OAuth token")
-    util7d = headers.get("anthropic-ratelimit-unified-7d-utilization")
-    reset5h = headers.get("anthropic-ratelimit-unified-5h-reset")
-    reset7d = headers.get("anthropic-ratelimit-unified-7d-reset")
-
-    return {
-        "used": max(0, min(100, round(float(util5h) * 100))),
-        "limit": 100,
-        "resetEpoch": int(reset5h) if reset5h else 0,
-        "used7d": max(0, min(100, round(float(util7d) * 100))) if util7d else 0,
-        "resetEpoch7d": int(reset7d) if reset7d else 0,
-        "models": claude_list_models(token),
-    }
 
 
 # ─── Cursor ───────────────────────────────────────────────────────────────
@@ -391,7 +292,6 @@ def codex_probe(model: str = None) -> dict:
 # ─── Provider registry ──────────────────────────────────────────────────────
 
 PROVIDERS = {
-    "claude": claude_probe,
     "cursor": cursor_probe,
     "codex":  codex_probe,
 }
@@ -401,8 +301,6 @@ def probe(provider: str, model: str = None) -> dict:
     fn = PROVIDERS.get(provider)
     if not fn:
         raise RuntimeError(f"Unknown provider '{provider}' (expected one of: {', '.join(PROVIDERS)})")
-    if provider == "claude":
-        return fn(model or "claude-haiku-4-5")
     return fn(model)
 
 
@@ -425,10 +323,10 @@ def push_to_device(ip: str, index: int, usage: dict) -> None:
         resp.read()
 
 
-def run_once(ip: str, targets: dict, default_claude_model: str) -> None:
+def run_once(ip: str, targets: dict) -> None:
     for prov, (index, model) in targets.items():
         try:
-            usage = probe(prov, model or (default_claude_model if prov == "claude" else None))
+            usage = probe(prov, model)
             push_to_device(ip, index, usage)
             log(f"{prov}: used={usage.get('used')} used7d={usage.get('used7d', 0)} "
                 f"-> pushed to {ip} (agent index {index}{f', model={model}' if model else ''})")
@@ -467,7 +365,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._cors()
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"error": "missing or unknown ?provider= (claude|cursor|codex)"}).encode())
+            self.wfile.write(json.dumps({"error": "missing or unknown ?provider= (cursor|codex)"}).encode())
             return
         cache_key = (prov, model)
         try:
@@ -502,7 +400,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 def run_server(port: int, cache_seconds: int) -> None:
     BridgeHandler.cache_seconds = cache_seconds
     server = HTTPServer(("127.0.0.1", port), BridgeHandler)
-    log(f"Bridge server running at http://127.0.0.1:{port}/usage?provider=claude|cursor|codex (cache={cache_seconds}s)")
+    log(f"Bridge server running at http://127.0.0.1:{port}/usage?provider=cursor|codex (cache={cache_seconds}s)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -534,9 +432,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ip", help="ESP32 device IP, e.g. 192.168.1.50 (required unless --serve)")
     parser.add_argument("--push", nargs="+", default=[],
-                        help="provider:index[:model] entries to sync each cycle, e.g. claude:0 cursor:1 codex:2:gpt-4o")
+                        help="provider:index[:model] entries to sync each cycle, e.g. cursor:1 codex:2:gpt-4o")
     parser.add_argument("--interval", type=int, default=120, help="Seconds between probes (default: 120)")
-    parser.add_argument("--model", default="claude-haiku-4-5", help="Claude probe model (default: claude-haiku-4-5)")
     parser.add_argument("--once", action="store_true", help="Run a single probe/push cycle and exit")
     parser.add_argument("--serve", action="store_true",
                         help="Run a local HTTP bridge (GET /usage?provider=...) for browser-based testing")
@@ -557,12 +454,12 @@ def main() -> int:
     targets = parse_targets(args.push)
 
     if args.once:
-        run_once(args.ip, targets, args.model)
+        run_once(args.ip, targets)
         return 0
 
     log(f"Starting daemon: device={args.ip} targets={targets} interval={args.interval}s")
     while True:
-        run_once(args.ip, targets, args.model)
+        run_once(args.ip, targets)
         time.sleep(args.interval)
 
 

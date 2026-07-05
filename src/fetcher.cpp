@@ -170,11 +170,36 @@ static bool syncDeepSeek(Agent& agent) {
     return ok;
 }
 
-// ─── Anthropic (Claude) — rate-limit header probe ────────────────────────────
-// Requires a Claude Code OAuth token (e.g. from `claude setup-token`), not a
-// regular sk-ant-api03... API key. Sends a minimal 1-token Haiku request
-// (near-zero cost) purely to read the `anthropic-ratelimit-unified-*`
-// response headers, which carry the Pro/Max plan's 5h/7d usage windows.
+// ─── Anthropic (Claude) — tier rate-limit header probe ───────────────────────
+// Uses a regular sk-ant-api03... developer API key via `x-api-key`. The
+// Pro/Max-plan "unified" 5h/7d usage windows required a Claude Code OAuth
+// session token (`claude setup-token`) sent as `Authorization: Bearer` —
+// Anthropic disabled that for third-party clients (~Feb 2026; returns
+// "OAuth authentication is currently not supported" regardless of header
+// shape, confirmed via serial log — not something any header/encoding fix
+// on our side can work around). A plain API key has no account-wide
+// balance/usage endpoint, so the closest available signal is the
+// account tier's standard per-minute token rate limit, exposed via
+// `anthropic-ratelimit-tokens-*` response headers on every request.
+
+// Parses an RFC3339 UTC timestamp ("YYYY-MM-DDTHH:MM:SSZ", the format
+// Anthropic uses for `anthropic-ratelimit-*-reset`) into a Unix epoch.
+// mktime() normally treats the struct as local time, but main.cpp's
+// configTime(0, 0, ...) pins the device's local time to UTC (zero offset,
+// zero DST), so local time IS UTC here — no timegm() needed.
+static uint32_t parseRfc3339ToEpoch(const String& s) {
+    int y, mo, d, h, mi, se;
+    if (sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return 0;
+    struct tm t = {};
+    t.tm_year = y - 1900;
+    t.tm_mon  = mo - 1;
+    t.tm_mday = d;
+    t.tm_hour = h;
+    t.tm_min  = mi;
+    t.tm_sec  = se;
+    time_t epoch = mktime(&t);
+    return (epoch > 0) ? (uint32_t)epoch : 0;
+}
 
 static bool syncAnthropic(Agent& agent) {
     WiFiClientSecure client;
@@ -183,40 +208,16 @@ static bool syncAnthropic(Agent& agent) {
 
     if (!http.begin(client, "https://api.anthropic.com/v1/messages")) return false;
 
-    // TEMPORARY diagnostic: confirm the stored token's length/shape without
-    // ever printing the token itself. A genuine `claude setup-token` OAuth
-    // token is a single unbroken string with a recognizable prefix
-    // (typically "sk-ant-oat01-...") — if the length looks too short, or
-    // first/last chars look wrong, the paste likely picked up extra text
-    // or got cut off client-side before it ever reached the device.
-    {
-        int   len = strlen(agent.apiKey);
-        char  head[16] = {0}, tail[16] = {0};
-        strncpy(head, agent.apiKey, min(len, 12));
-        if (len > 12) strncpy(tail, agent.apiKey + len - 8, 8);
-        Serial.printf("[FETCH] Anthropic: stored key len=%d, starts '%s...', ends '...%s'\n",
-                      len, head, tail);
-    }
-
     static const char* headerKeys[] = {
-        "anthropic-ratelimit-unified-5h-utilization",
-        "anthropic-ratelimit-unified-5h-reset",
-        "anthropic-ratelimit-unified-7d-utilization",
-        "anthropic-ratelimit-unified-7d-reset",
-        "anthropic-ratelimit-unified-status",
+        "anthropic-ratelimit-tokens-limit",
+        "anthropic-ratelimit-tokens-remaining",
+        "anthropic-ratelimit-tokens-reset",
     };
-    http.collectHeaders(headerKeys, 5);
+    http.collectHeaders(headerKeys, 3);
 
-    http.addHeader("Authorization", String("Bearer ") + agent.apiKey);
+    http.addHeader("x-api-key", agent.apiKey);
     http.addHeader("anthropic-version", "2023-06-01");
-    http.addHeader("anthropic-beta", "oauth-2025-04-20"); // required for Bearer/OAuth auth
     http.addHeader("Content-Type", "application/json");
-    // Anthropic's API sits behind Cloudflare (visible in the response
-    // headers on every 401 so far) — HTTPClient's default UA is blank/
-    // generic, which Cloudflare (and possibly Anthropic's own OAuth-client
-    // check) may reject outright before the request is even evaluated.
-    // Neutral, not spoofing the real Claude Code CLI UA (unknown, and
-    // pretending to be it would look like impersonation).
     http.addHeader("User-Agent", "token-tracker-esp32/1.0");
     http.setTimeout(8000);
 
@@ -231,27 +232,28 @@ static bool syncAnthropic(Agent& agent) {
     http.getString(); // drain body, not needed
     bool ok = false;
 
-    if (http.hasHeader("anthropic-ratelimit-unified-5h-utilization")) {
-        float util5h = http.header("anthropic-ratelimit-unified-5h-utilization").toFloat();
-        uint32_t pct5h = (uint32_t)constrain(util5h * 100.0f, 0.0f, 100.0f);
+    if (http.hasHeader("anthropic-ratelimit-tokens-limit") &&
+        http.hasHeader("anthropic-ratelimit-tokens-remaining")) {
+        long limitVal     = http.header("anthropic-ratelimit-tokens-limit").toInt();
+        long remainingVal = http.header("anthropic-ratelimit-tokens-remaining").toInt();
 
-        float util7d = http.header("anthropic-ratelimit-unified-7d-utilization").toFloat();
-        uint32_t pct7d = (uint32_t)constrain(util7d * 100.0f, 0.0f, 100.0f);
+        if (limitVal > 0) {
+            uint32_t pct = (uint32_t)constrain(
+                100.0f * (float)(limitVal - remainingVal) / (float)limitVal, 0.0f, 100.0f);
 
-        agent.used    = pct5h;
-        agent.limit   = 100;    // percentage-based window, not raw tokens
-        agent.balance = -1.0f;  // not applicable
-        agent.resetEpoch    = (uint32_t)http.header("anthropic-ratelimit-unified-5h-reset").toInt();
-        agent.used7d        = pct7d;
-        agent.resetEpoch7d  = (uint32_t)http.header("anthropic-ratelimit-unified-7d-reset").toInt();
-        ok = true;
+            agent.used    = pct;
+            agent.limit   = 100;   // percentage-based window, not raw tokens
+            agent.balance = -1.0f; // not applicable
+            agent.resetEpoch    = parseRfc3339ToEpoch(http.header("anthropic-ratelimit-tokens-reset"));
+            agent.used7d        = 0; // no second window with a standard API key
+            agent.resetEpoch7d  = 0;
+            ok = true;
 
-        Serial.printf("[FETCH] Anthropic: 5h=%u%% 7d=%u%% status=%s reset5h=%u reset7d=%u\n",
-                      pct5h, pct7d,
-                      http.header("anthropic-ratelimit-unified-status").c_str(),
-                      agent.resetEpoch, agent.resetEpoch7d);
+            Serial.printf("[FETCH] Anthropic: tokens %ld/%ld used=%u%% reset=%u (HTTP %d)\n",
+                          limitVal - remainingVal, limitVal, pct, agent.resetEpoch, code);
+        }
     } else {
-        Serial.printf("[FETCH] Anthropic: HTTP %d, no rate-limit headers (needs an OAuth token)\n", code);
+        Serial.printf("[FETCH] Anthropic: HTTP %d, no rate-limit headers (bad/invalid API key?)\n", code);
     }
     http.end();
     return ok;

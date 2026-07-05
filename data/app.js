@@ -56,8 +56,12 @@ function isDeepSeek(name) { return (name || '').toLowerCase().startsWith('deepse
 // account-specific and can't be listed in a fixed dropdown).
 function hasModelPicker(name) { return isAnthropic(name) || isCursor(name) || isCodex(name); }
 // Providers whose data has two rate-limit windows (short + long), rendered
-// as two cards instead of one on the display preview.
-function hasDualWindow(agent) { return isAnthropic(agent.name) || (isCodex(agent.name) && !agent.model); }
+// as two cards instead of one on the display preview. Claude used to
+// qualify (Pro/Max OAuth session's unified 5h/7d headers), but Anthropic
+// disabled OAuth auth for third-party clients (~Feb 2026) — the device now
+// authenticates Claude with a regular API key, which only exposes a single
+// per-minute tier rate-limit window, so it renders like everyone else.
+function hasDualWindow(agent) { return isCodex(agent.name) && !agent.model; }
 function hasAutoSync(name) { return isOpenAI(name) || isDeepSeek(name) || isAnthropic(name) || isCursor(name) || isCodex(name); }
 
 function presetFor(name) {
@@ -234,7 +238,11 @@ function renderUsageScreen(active, preset) {
 
     if (hasLimit) {
       const pct = Math.min(100, Math.round(active.used * 100 / active.limit));
-      cards = renderUsageCard(`${active.name}:monthly`, 'Monthly', pct + '%', pct, usageBarColor(pct), resetLine);
+      // Claude's percentage here is a per-minute tier rate limit, not a
+      // monthly budget like OpenAI/Cursor/Codex — label it accordingly,
+      // matching the physical display's "Rate Limit" pill.
+      const label = isAnthropic(active.name) ? 'Rate Limit' : 'Monthly';
+      cards = renderUsageCard(`${active.name}:monthly`, label, pct + '%', pct, usageBarColor(pct), resetLine);
     } else if (hasUsed) {
       cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine);
     } else if (hasBalance) {
@@ -308,11 +316,10 @@ function buildCard(ag, i) {
   const keyInput = card.querySelector('.inp-apikey');
   if (!ag.hasKey) {
     if (isAnthropic(ag.name)) {
-      // The device authenticates as an OAuth session (needed to read the
-      // Pro/Max plan's 5h/7d rate-limit headers) — a regular sk-ant-...
-      // developer API key is rejected. Run `claude setup-token` once on any
-      // machine with the CLI logged in and paste its output here.
-      keyInput.placeholder = "Run 'claude setup-token' locally, paste the OAuth token here (not a sk-ant-... API key)";
+      // Anthropic disabled OAuth session tokens (claude setup-token) for
+      // third-party clients ~Feb 2026 — a regular developer API key from
+      // console.anthropic.com is the only thing that still authenticates.
+      keyInput.placeholder = 'Regular API key from console.anthropic.com (sk-ant-api03-...)';
     } else if (isCursor(ag.name)) {
       // The token lives in Cursor IDE's local session database, not
       // anywhere a user would normally see it — no simple CLI command like

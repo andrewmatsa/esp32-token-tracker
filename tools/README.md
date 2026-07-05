@@ -2,9 +2,12 @@
 
 One companion PC script (`usage-daemon.py`) that auto-fetches usage for
 providers whose auth tokens either can't be typed into the device directly
-(Claude's OAuth token, Codex's local login) or are easiest to read straight
-from the app's own local storage (Cursor IDE). One process, one port for
-browser testing, all three providers.
+(Codex's local login) or are easiest to read straight from the app's own
+local storage (Cursor IDE). One process, one port for browser testing.
+
+**Claude isn't covered here** — see step 3 below. It authenticates
+on-device with a regular API key; there's no local credential file for a
+daemon to read automatically the way there is for Cursor/Codex.
 
 **Requires:** Python 3 (stdlib only — no `pip install`).
 
@@ -19,17 +22,18 @@ Agent slots are numbered by the order they were added in the web UI,
 starting at 0. E.g. if you added Claude, Cursor, Codex in that order, their
 indexes are `0`, `1`, `2`.
 
-## 3. Add the agents with an empty API key (Claude/Codex) or a pasted key (Cursor)
+## 3. Add the agents with an empty API key (Codex) or a pasted key (Claude/Cursor)
 
-- **Claude**: add a "Claude" agent, leave the API key field empty — all its
-  data comes from this daemon's pushes. **Alternative (no daemon/PC needed
-  at all):** run `claude setup-token` once on any machine with the CLI
-  logged in — this mints a long-lived OAuth token — and paste its output
-  directly into the device's API key field instead. The device then syncs
-  Claude on its own forever, the same way it already does for OpenAI/
-  DeepSeek/Cursor. A regular `sk-ant-api03-...` developer API key does
-  *not* work here — the device authenticates as an OAuth session
-  specifically to read the Pro/Max plan's rate-limit headers.
+- **Claude**: paste a **regular developer API key** (`sk-ant-api03-...`
+  from console.anthropic.com) directly into the device's API key field —
+  no daemon needed, the device syncs on its own. ⚠️ Anthropic disabled
+  OAuth session tokens (`claude setup-token`) for third-party clients
+  around February 2026 — `Authorization: Bearer <oauth-token>` now returns
+  `"OAuth authentication is currently not supported"` regardless of header
+  shape, so that path (and this daemon's old Claude support, which relied
+  on it) no longer works. With a regular API key the device reports the
+  account tier's per-minute token rate limit instead of the old Pro/Max
+  5h/7d percentages (see `src/fetcher.cpp`'s `syncAnthropic()`).
 - **Codex**: add a "Codex" agent — the API key field is disabled entirely
   (there's no key at all; usage comes from Codex CLI's own local login).
 - **Cursor**: works either way — paste the access token directly into the
@@ -43,14 +47,14 @@ leave it blank for the default behavior.
 ## 4. Run the daemon
 
 ```bash
-python tools/usage-daemon.py --ip 192.168.1.50 --push claude:0 cursor:1 codex:2
+python tools/usage-daemon.py --ip 192.168.1.50 --push cursor:1 codex:2
 ```
 
 Only include the providers you've actually signed into. Use `--once` for a
 single test cycle:
 
 ```bash
-python tools/usage-daemon.py --ip 192.168.1.50 --push claude:0 codex:2 --once
+python tools/usage-daemon.py --ip 192.168.1.50 --push codex:2 --once
 ```
 
 Options:
@@ -60,7 +64,6 @@ Options:
 | `--ip`       | —       | Device IP (required unless `--serve`)                      |
 | `--push`     | —       | One or more `provider:index[:model]` entries (required unless `--serve`) |
 | `--interval` | `120`   | Seconds between probe/push cycles                          |
-| `--model`    | `claude-haiku-4-5` | Claude probe model                              |
 | `--once`     | off     | Run a single cycle and exit                                |
 
 ### Filtering to one model (Cursor / Codex)
@@ -84,10 +87,14 @@ python tools/usage-daemon.py --serve
 ```
 
 ```
-GET http://127.0.0.1:8765/usage?provider=claude[&model=claude-haiku-4-5]
 GET http://127.0.0.1:8765/usage?provider=cursor[&model=gpt-4]
 GET http://127.0.0.1:8765/usage?provider=codex[&model=gpt-4o]
 ```
+
+(Claude has no bridge entry here since it's no longer a daemon provider —
+`temporary.html`'s Claude preview still needs its own look at whether a
+regular API key call needs the same direct-browser-access header/CORS
+handling the old OAuth path required; not covered by this change.)
 
 | Flag      | Default | Description                                                        |
 | --------- | ------- | -------------------------------------------------------------------- |
@@ -96,10 +103,13 @@ GET http://127.0.0.1:8765/usage?provider=codex[&model=gpt-4o]
 
 ## How each provider works
 
-**Claude** — sends a minimal 1-token request to `POST /v1/messages`
-(near-zero cost) purely to read the `anthropic-ratelimit-unified-5h-*` /
-`-7d-*` response headers. Token read fresh each cycle from Claude Code's
-local credential storage (`~/.claude/.credentials.json`, or macOS Keychain).
+**Claude** — not a daemon provider (see step 3 above). Handled entirely
+on-device by `src/fetcher.cpp`'s `syncAnthropic()`: a minimal 1-token
+request to `POST /v1/messages` with the regular API key via `x-api-key`,
+reading the standard `anthropic-ratelimit-tokens-limit` /
+`-tokens-remaining` / `-tokens-reset` response headers (account tier's
+per-minute rate limit — the OAuth-only Pro/Max 5h/7d "unified" headers
+this used to read are no longer reachable from third-party clients).
 
 **Cursor** — reads `cursorAuth/accessToken` from Cursor IDE's local SQLite
 state database (`state.vscdb`, path varies by OS), then
@@ -108,18 +118,18 @@ plus a browser-like `User-Agent` (Cloudflare otherwise rejects the request).
 By default sums `numRequests`/`maxRequestUsage` across all model buckets in
 the response (each response key is a model name, e.g. `"gpt-4"`); with a
 model filter, only that one key's numbers are used. Reset = one month after
-`startOfMonth`. Unlike Claude, this token has no Origin restriction, so it
-also works pasted directly into the device (see `src/fetcher.cpp`'s
-`syncCursor()`, which honors the same model filter via the agent's `model`
-field) — no daemon required for that path.
+`startOfMonth`. This token has no Origin restriction, so it also works
+pasted directly into the device (see `src/fetcher.cpp`'s `syncCursor()`,
+which honors the same model filter via the agent's `model` field) — no
+daemon required for that path.
 
 **Codex** — reads `tokens.access_token`/`account_id` from Codex CLI's own
 login file (`~/.codex/auth.json`). By default calls
 `GET https://chatgpt.com/backend-api/wham/usage` (the same undocumented
 endpoint Codex CLI itself uses) and reads `rate_limit.primary_window` /
-`.secondary_window` (`used_percent`, `reset_after_seconds`) — same
-two-window shape as Claude's 5h/7d, account-wide (no per-model breakdown
-exists on this endpoint). With a model filter, it instead calls
+`.secondary_window` (`used_percent`, `reset_after_seconds`) — a
+dual-window shape, account-wide (no per-model breakdown exists on this
+endpoint). With a model filter, it instead calls
 `GET .../wham/usage/daily-token-usage-breakdown`, sums that model's
 `credits` across this calendar month's per-day `models[]` entries, and
 reports it as a plain used-count (no percentage/limit — same shape as
@@ -131,8 +141,9 @@ OpenAI's "no known limit" card). No on-device sync path exists for Codex
 - No token-refresh logic — if a local token/login expires, re-run the
   relevant CLI's sign-in and the daemon will pick up the new one automatically
   (read fresh from disk every cycle).
-- All three endpoints are unofficial/reverse-engineered (except Claude's
-  documented rate-limit headers) — they can change without notice.
+- Both Cursor and Codex endpoints are unofficial/reverse-engineered — they
+  can change without notice (as Claude's own OAuth-for-third-parties path
+  already has, once).
 - No systemd/launchd unit yet — run it in a terminal, tmux, or your own
   process supervisor.
 - The `/push` endpoint on the device is unauthenticated (same trust model

@@ -130,14 +130,17 @@ static void drawWifiDot() {
     tft.fillCircle(228, 12, 5, C_WIFI);
 }
 
-// ─── Claude "Usage" screen (5h / 7d rate-limit windows) ──────────────────────
+// ─── Claude "Usage" screen (single tier rate-limit window) ───────────────────
 // Mirrors the browser preview's watch-style layout in temporary.html.
+// Used to show two cards (5h/7d) from the Pro/Max OAuth session's "unified"
+// rate-limit headers; Anthropic disabled OAuth auth for third-party clients
+// (~Feb 2026), so this now runs on a regular API key instead, which only
+// exposes one per-minute tier rate-limit window — one card, not two.
 
 #define CLAUDE_CARD_X   16
 #define CLAUDE_CARD_W  208
 #define CLAUDE_CARD_H   68
-#define CLAUDE_CARD1_Y  48
-#define CLAUDE_CARD2_Y 130
+#define CLAUDE_CARD1_Y  90
 
 static bool isClaudeAgent(const char* name) {
     return strncasecmp(name, "claude", 6) == 0 || strncasecmp(name, "anthropic", 9) == 0;
@@ -235,16 +238,12 @@ static void renderClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
     tft.setTextColor(C_TEXT, C_BG);
     tft.drawString("Usage", startX + spriteW + 8, 14 + spriteH / 2);
 
-    uint32_t pct5h = min((uint32_t)100, agent->used);
-    uint32_t pct7d = min((uint32_t)100, agent->used7d);
-
-    drawClaudeCard(CLAUDE_CARD1_Y, "Current", pct5h, agent->resetEpoch, nowEpoch);
-    drawClaudeCard(CLAUDE_CARD2_Y, "Weekly",  pct7d, agent->resetEpoch7d, nowEpoch);
+    uint32_t pct = min((uint32_t)100, agent->used);
+    drawClaudeCard(CLAUDE_CARD1_Y, "Rate Limit", pct, agent->resetEpoch, nowEpoch);
 }
 
 static void tickClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
     tickClaudeReset(CLAUDE_CARD1_Y, agent->resetEpoch, nowEpoch);
-    tickClaudeReset(CLAUDE_CARD2_Y, agent->resetEpoch7d, nowEpoch);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
