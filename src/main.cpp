@@ -62,10 +62,18 @@ static void onUpdate(int index, const Agent& agent) {
     agents[index] = agent;
     storage_save(index, agent);
     activeIdx = findActive();
+
+    // Sync right now, synchronously, instead of just flagging it for the
+    // next periodic fetchAll() check (up to FETCH_CHECK_MS later) — the
+    // user just saved a key/settings and wants to see it work immediately.
+    if (strlen(agents[index].apiKey) > 0 && agents[index].enabled) {
+        if (fetcher_sync(agents[index])) storage_save(index, agents[index]);
+        lastFetchAt[index]  = millis();
+        pendingFetch[index] = false;
+    }
+
     display_render(activeIdx >= 0 ? &agents[activeIdx] : nullptr);
     webserver_broadcastState(agents, agentCount);
-    // If this agent has an API key, fetch immediately instead of waiting for its interval
-    if (strlen(agent.apiKey) > 0) pendingFetch[index] = true;
 }
 
 static void onSetActive(int index) {
@@ -80,7 +88,12 @@ static void onSetEnabled(int index, bool enabled) {
     if (index < 0 || index >= agentCount) return;
     agents[index].enabled = enabled;
     storage_save(index, agents[index]);
-    if (enabled && strlen(agents[index].apiKey) > 0) pendingFetch[index] = true;
+    if (enabled && strlen(agents[index].apiKey) > 0) {
+        if (fetcher_sync(agents[index])) storage_save(index, agents[index]);
+        lastFetchAt[index]  = millis();
+        pendingFetch[index] = false;
+        if (index == activeIdx) display_render(&agents[activeIdx]);
+    }
     webserver_broadcastState(agents, agentCount);
 }
 
