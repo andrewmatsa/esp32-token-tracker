@@ -8,16 +8,12 @@ typedef void (*OnDelete)(int index);
 typedef void (*OnExternalPush)(int index, uint32_t used, uint32_t limit, uint32_t resetEpoch,
                                uint32_t used7d, uint32_t resetEpoch7d);
 
-// Initialize AsyncWebServer + WebSocket. SPIFFS must already be mounted.
+// Initialize the HTTP server (REST /command + /state, /push, /wifi/*, static
+// files). SPIFFS must already be mounted. The browser polls GET /state, so
+// there's no server-initiated push and nothing to service from loop().
 void webserver_init(Agent agents[MAX_AGENTS], int* count,
                     OnAgentUpdate  cbUpdate,
                     OnSetActive    cbActive,
                     OnSetEnabled   cbEnabled,
                     OnDelete       cbDelete,
                     OnExternalPush cbPush);
-
-// Broadcast current agent state to all connected WebSocket clients.
-void webserver_broadcastState(Agent agents[MAX_AGENTS], int count);
-
-// Must be called from loop() to process WebSocket cleanup.
-void webserver_loop();

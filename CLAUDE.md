@@ -35,7 +35,7 @@ ESP32-C3 Super Mini device with a 1.54" ST7789 240×240 TFT display that tracks 
 | `storage.h/.cpp` | NVS (Preferences) persistence for `Agent` structs. Namespace: `"ttracker"`, keys like `ag0name`, `ag0key`, `ag0bal` |
 | `fetcher.h/.cpp` | HTTPS polling per provider (OpenAI sums daily usage; DeepSeek fetches balance). Sets `agent.model` from `snapshot_id`. Uses `WiFiClientSecure::setInsecure()` |
 | `display.h/.cpp` | TFT rendering via TFT_eSPI. `display_render()` is adaptive — shows only what data is available. `display_tick()` called every 500ms for pulse dot + countdown only (no full redraw) |
-| `webserver.h/.cpp` | AsyncWebServer port 80 + AsyncWebSocket `/ws`. Broadcasts `hasKey` bool instead of actual API key. SPIFFS serves `data/` as static files |
+| `webserver.h/.cpp` | AsyncWebServer port 80. REST: `GET /state` (browser polls this) + `POST /command`; also `/push` (daemon), `/wifi/*`. Sends `hasKey` bool instead of actual API key. SPIFFS serves `data/` as static files. No WebSocket — see HTTP Protocol section |
 | `wifi_manager.h/.cpp` | STA connect + captive portal (SoftAP + DNSServer + blocking setup server). On success: `ESP.restart()` |
 | `include/config.h` | Pin defines, thresholds, `FETCH_INTERVAL_MS = 600000` |
 
@@ -57,11 +57,17 @@ struct Agent {
 };
 ```
 
-### WebSocket Protocol (browser ↔ ESP32)
-- **ESP32 → browser**: `{ type: "state", agents: [...] }` — includes `hasKey` bool, never `apiKey`; includes both `model` and `probeModel` for Claude agents (see below)
-- **browser → ESP32**: `{ type: "update", index, name, apiKey?, model?, probeModel? }` — `apiKey` only when user types a new one; omitting `apiKey` preserves existing key. `model` is Codex/OpenAI's auto-detected-and-overwritten-every-cycle filter (`fetcher.cpp`'s dominant `snapshot_id`) or Cursor's free-text bucket filter — any value the browser sends for Codex is transient since the fetcher overwrites it next cycle anyway. `probeModel` is Claude-specific (see below); the browser never sends `model` for a Claude agent, and the server ignores it if it did (only `webserver.cpp`'s `/push` handler, i.e. the PC daemon, may set a Claude agent's `model`).
+### HTTP Protocol (browser ↔ ESP32)
+Plain REST + polling — no WebSocket. The browser polls `GET /state` every 15 s
+(and re-fetches right after issuing a command); commands are `POST /command`.
+See `webserver.cpp` and `docs/http-migration-plan.md` for the rationale (the
+old WS transport was replaced because the workload is human-paced commands +
+multi-minute state refresh, for which a persistent per-tab socket is the
+heaviest option for the least benefit on an ESP32-C3).
+- **`GET /state`** → `{ type: "state", agents: [...] }` — includes `hasKey` bool, never `apiKey`; includes both `model` and `probeModel` for Claude agents (see below). (`type` field is a harmless carry-over from the old WS payload — the browser keeps one parsing path.)
+- **`POST /command`** body `{ type: "update", index, name, apiKey?, model?, probeModel? }` — `apiKey` only when user types a new one; omitting `apiKey` preserves existing key. `model` is Codex/OpenAI's auto-detected-and-overwritten-every-cycle filter (`fetcher.cpp`'s dominant `snapshot_id`) or Cursor's free-text bucket filter — any value the browser sends for Codex is transient since the fetcher overwrites it next cycle anyway. `probeModel` is Claude-specific (see below); the browser never sends `model` for a Claude agent, and the server ignores it if it did (only `webserver.cpp`'s `/push` handler, i.e. the PC daemon, may set a Claude agent's `model`).
+- **`POST /command`** body `{ type: "setActive", index }` | `{ type: "setEnabled", index, enabled }` | `{ type: "delete", index }`.
 - **Claude's `model` and `probeModel` are two independent fields, not one overloaded field** — this was a real bug (see git history) where a single field was used both as "which model to check the rate limit for" and "which model did the user really just use," and showing the former under an unqualified "current model" label was actively misleading. Now: `probeModel` is the user's manual rate-limit target, set via the web UI's closed `<select>` (`fetcher.cpp`'s `syncAnthropic()` sends it in the `/v1/messages` probe body — Anthropic's rate limits are model-specific, and an invalid name would make Anthropic reject the probe outright, hence the closed dropdown instead of free text). `model` is exclusively the real last-used model, written only by `tools/usage-daemon.py`'s `/push` (JSONL transcript scan) — it is never set by the web UI or the on-device probe, and is empty until the daemon has run at least once. The two fields can't collide since they're never written by the same path.
-- **browser → ESP32**: `{ type: "setActive", index }` | `{ type: "delete", index }`
 
 ### Fetch Logic
 - On boot: `doImmediateFetch = true` → `fetchAll()` runs at first `loop()` iteration
@@ -88,7 +94,7 @@ Display driver is configured entirely via `build_flags` in `platformio.ini` (no 
 - NVS keys max 15 chars: `ag0name`, `ag0model`, `ag0key`, `ag0used`, `ag0limit`, `ag0reset`, `ag0bal`, `ag0active`
 - Max 6 agents (`MAX_AGENTS`)
 - All display text and code comments must be in English
-- API keys are stored only in NVS; never appear in WebSocket state broadcasts or on TFT display
+- API keys are stored only in NVS; never appear in `GET /state` responses or on TFT display
 - `display_tick()` does partial redraws only (pulse dot + countdown) to avoid flicker — `display_render()` does full redraws on state changes
 
 ## Display Synchronization

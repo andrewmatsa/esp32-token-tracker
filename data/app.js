@@ -103,30 +103,57 @@ let agents = [];
 // and the user otherwise has no confirmation anything happened.
 let justSavedIndex = null;
 let justSavedTimer = null;
-let ws     = null;
 
-// ─── WebSocket ────────────────────────────────────────────────────────────────
-function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
-
-  ws.onopen = () => {
-    document.getElementById('ws-status').textContent = 'Online';
-    document.getElementById('ws-status').className   = 'badge online';
-  };
-  ws.onclose = () => {
-    document.getElementById('ws-status').textContent = 'Offline';
-    document.getElementById('ws-status').className   = 'badge offline';
-    setTimeout(connect, 3000);
-  };
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'state') { agents = msg.agents; renderAll(); }
-  };
+// ─── HTTP state sync ────────────────────────────────────────────────────────
+// No persistent connection — the browser polls GET /state on an interval and
+// re-fetches immediately after issuing a command. The Online/Offline badge
+// reflects the last poll's success.
+function setOnline(online) {
+  const el = document.getElementById('ws-status');
+  el.textContent = online ? 'Online' : 'Offline';
+  el.className   = online ? 'badge online' : 'badge offline';
 }
 
+// Monotonic guard: when several refreshes overlap (e.g. two quick commands
+// each triggering one), their GETs can resolve out of order — only the most
+// recently issued response is allowed to render, so a stale one can't clobber
+// a newer state.
+let refreshSeq = 0;
+async function refresh() {
+  const seq = ++refreshSeq;
+  try {
+    const r = await fetch('/state');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (seq !== refreshSeq) return; // a newer refresh has started; drop this one
+    agents = data.agents;
+    setOnline(true);
+    renderAll();
+  } catch {
+    if (seq === refreshSeq) setOnline(false);
+  }
+}
+
+async function postCommand(obj) {
+  try {
+    // Explicit application/json — a bare string body defaults to text/plain,
+    // and AsyncWebServer intercepts x-www-form-urlencoded before the body
+    // handler, so being explicit keeps the raw JSON reaching /command.
+    await fetch('/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(obj),
+    });
+  } catch {
+    setOnline(false);
+  }
+}
+
+// Issue a command, then reflect the resulting state. Callers that fire a
+// single command rely on this; multi-command flows (see saveAgent) await the
+// commands themselves and call refresh() once.
 function send(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify(obj));
+  postCommand(obj).then(refresh);
 }
 
 // ─── Preset modal ─────────────────────────────────────────────────────────────
@@ -517,7 +544,7 @@ function buildCard(ag, i) {
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
-function saveAgent(i) {
+async function saveAgent(i) {
   const card   = document.querySelector(`.card[data-index="${i}"]`);
   const apiKey = card.querySelector('.inp-apikey').value.trim();
 
@@ -540,17 +567,22 @@ function saveAgent(i) {
     msg.syncInterval = Number.isFinite(interval) && interval > 0 ? interval : 0;
   }
 
-  send(msg);
+  // Save, then mark active — saving (new agent or edit) makes it the one
+  // shown on the device/dashboard, no separate click needed. Both commands
+  // are awaited in order before a single refresh(), so the device has applied
+  // them (and appended a brand-new agent to its array) by the time we re-read
+  // state — avoiding a race and a double GET.
+  await postCommand(msg);
+  await postCommand({ type: 'setActive', index: i });
 
-  // Immediate "Saved" feedback — the WS update is fire-and-forget, so
-  // without this the user has no confirmation anything happened. Shown for
-  // a couple seconds, surviving the state-broadcast re-render that follows
-  // shortly after (renderAll() reads justSavedIndex every time it rebuilds
-  // the cards).
+  // Immediate "Saved" feedback — shown for a couple seconds, surviving the
+  // refresh() re-render that follows (renderAll() reads justSavedIndex every
+  // time it rebuilds the cards).
   justSavedIndex = i;
   if (justSavedTimer) clearTimeout(justSavedTimer);
   justSavedTimer = setTimeout(() => { justSavedIndex = null; renderAll(); }, 2000);
   renderAll();
+  refresh();
 }
 
 function setActive(i)   { send({ type: 'setActive', index: i }); }
@@ -579,5 +611,9 @@ async function resetWifi() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 buildPresetGrid();
-connect();
+refresh();
+// Background poll to pick up device-side changes (background fetchAll every
+// 10 min, daemon /push every ~120 s) — the interval self-heals a dropped
+// connection, so no separate reconnect logic is needed.
+setInterval(refresh, 15000);
 loadWifiInfo();

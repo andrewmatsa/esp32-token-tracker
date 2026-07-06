@@ -349,8 +349,11 @@ void display_init() {
 
 void display_render(const Agent* agent) {
     if (!agent) {
+        // e.g. after deleting the last/only active agent — token-tracker.local
+        // (mDNS, started in main.cpp's setup()) works regardless of the
+        // device's current DHCP-assigned IP, so it's a stable hint to show.
         tft.fillScreen(C_BG);
-        display_renderIdle("---");
+        display_renderIdle("token-tracker.local");
         return;
     }
 

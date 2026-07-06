@@ -6,7 +6,6 @@
 #include <ArduinoJson.h>
 
 static AsyncWebServer  server(80);
-static AsyncWebSocket  ws("/ws");
 
 static Agent*        _agents   = nullptr;
 static int*          _count    = nullptr;
@@ -43,23 +42,12 @@ static String buildStateJson(Agent agents[MAX_AGENTS], int count) {
     return out;
 }
 
-// ─── WebSocket handler ────────────────────────────────────────────────────────
+// ─── Command dispatch ─────────────────────────────────────────────────────────
+// Applies one browser command (`{type, ...}`) to the agent model via the
+// registered callbacks. Shared by the POST /command HTTP handler; the payload
+// shape is unchanged from the previous WebSocket protocol.
 
-static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
-                      AwsEventType type, void* arg, uint8_t* data, size_t len) {
-    if (type == WS_EVT_CONNECT) {
-        client->text(buildStateJson(_agents, *_count));
-        return;
-    }
-    if (type != WS_EVT_DATA) return;
-
-    AwsFrameInfo* info = (AwsFrameInfo*)arg;
-    if (!info->final || info->index != 0 || info->len != len) return;
-    if (info->opcode != WS_TEXT) return;
-
-    JsonDocument doc;
-    if (deserializeJson(doc, data, len) != DeserializationError::Ok) return;
-
+static void handleCommand(JsonDocument& doc) {
     const char* msgType = doc["type"] | "";
 
     if (strcmp(msgType, "update") == 0) {
@@ -121,8 +109,28 @@ void webserver_init(Agent agents[MAX_AGENTS], int* count,
     _cbDelete  = cbDelete;
     _cbPush    = cbPush;
 
-    ws.onEvent(onWsEvent);
-    server.addHandler(&ws);
+    // State endpoint — the browser polls this (and re-fetches right after
+    // issuing a command) instead of holding a WebSocket open. Reuses the exact
+    // same JSON the old WS `state` broadcast sent.
+    server.on("/state", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", buildStateJson(_agents, *_count));
+    });
+
+    // Command endpoint — browser → device CRUD (update/setActive/setEnabled/
+    // delete), same payloads the old WS handler parsed. Body-handler pattern
+    // mirrors /push below.
+    server.on("/command", HTTP_POST, [](AsyncWebServerRequest* req) {},
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index + len != total) return; // wait for the full body
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len) != DeserializationError::Ok) {
+                req->send(400, "application/json", "{\"ok\":false,\"error\":\"bad json\"}");
+                return;
+            }
+            handleCommand(doc);
+            req->send(200, "application/json", "{\"ok\":true}");
+        });
 
     // Push endpoint — lets an external companion process (e.g. a PC daemon
     // reading a local OAuth token) report usage without the token ever
@@ -182,14 +190,5 @@ void webserver_init(Agent agents[MAX_AGENTS], int* count,
     server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
     server.begin();
-    Serial.println("[WS] HTTP server started on port 80");
-}
-
-void webserver_broadcastState(Agent agents[MAX_AGENTS], int count) {
-    if (ws.count() == 0) return;
-    ws.textAll(buildStateJson(agents, count));
-}
-
-void webserver_loop() {
-    ws.cleanupClients();
+    Serial.println("[HTTP] Server started on port 80");
 }

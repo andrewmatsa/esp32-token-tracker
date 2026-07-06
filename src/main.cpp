@@ -53,7 +53,7 @@ static void fetchAll() {
     }
     if (anyUpdated) {
         if (activeIdx >= 0) display_render(&agents[activeIdx]);
-        webserver_broadcastState(agents, agentCount);
+        // No push to the browser — it polls GET /state on its own interval.
     }
 }
 
@@ -64,17 +64,15 @@ static void onUpdate(int index, const Agent& agent) {
     storage_save(index, agent);
     activeIdx = findActive();
 
-    // Sync right now, synchronously, instead of just flagging it for the
-    // next periodic fetchAll() check (up to FETCH_CHECK_MS later) — the
-    // user just saved a key/settings and wants to see it work immediately.
-    if (strlen(agents[index].apiKey) > 0 && agents[index].enabled) {
-        if (fetcher_sync(agents[index])) storage_save(index, agents[index]);
-        lastFetchAt[index]  = millis();
-        pendingFetch[index] = false;
-    }
+    // Flag for an immediate fetch on the next loop() tick (≤ FETCH_CHECK_MS)
+    // instead of syncing here: this callback runs on the async web-server
+    // task, and fetcher_sync() is a blocking HTTPS request — running it here
+    // stalls the HTTP response to the browser and risks a watchdog reset on
+    // the AsyncTCP task. fetchAll() does it safely on the main loop.
+    if (strlen(agents[index].apiKey) > 0 && agents[index].enabled)
+        pendingFetch[index] = true;
 
     display_render(activeIdx >= 0 ? &agents[activeIdx] : nullptr);
-    webserver_broadcastState(agents, agentCount);
 }
 
 static void onSetActive(int index) {
@@ -82,20 +80,17 @@ static void onSetActive(int index) {
     storage_setActive(index, agents, agentCount);
     activeIdx = index;
     display_render(&agents[activeIdx]);
-    webserver_broadcastState(agents, agentCount);
 }
 
 static void onSetEnabled(int index, bool enabled) {
     if (index < 0 || index >= agentCount) return;
     agents[index].enabled = enabled;
     storage_save(index, agents[index]);
-    if (enabled && strlen(agents[index].apiKey) > 0) {
-        if (fetcher_sync(agents[index])) storage_save(index, agents[index]);
-        lastFetchAt[index]  = millis();
-        pendingFetch[index] = false;
-        if (index == activeIdx) display_render(&agents[activeIdx]);
-    }
-    webserver_broadcastState(agents, agentCount);
+    // Defer the fetch to the main loop (see onUpdate) — never block this
+    // async web-server callback with a synchronous HTTPS probe.
+    if (enabled && strlen(agents[index].apiKey) > 0)
+        pendingFetch[index] = true;
+    if (index == activeIdx) display_render(&agents[activeIdx]);
 }
 
 static void onDelete(int index) {
@@ -103,7 +98,6 @@ static void onDelete(int index) {
     storage_delete(index, agents, agentCount);
     activeIdx = findActive();
     display_render(activeIdx >= 0 ? &agents[activeIdx] : nullptr);
-    webserver_broadcastState(agents, agentCount);
 }
 
 // Usage pushed by an external companion process (e.g. the PC daemon reading
@@ -118,7 +112,6 @@ static void onExternalPush(int index, uint32_t used, uint32_t limit, uint32_t re
     agents[index].resetEpoch7d = resetEpoch7d;
     storage_save(index, agents[index]);
     if (index == activeIdx) display_render(&agents[activeIdx]);
-    webserver_broadcastState(agents, agentCount);
 }
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
@@ -193,19 +186,21 @@ void setup() {
     // Start web server
     webserver_init(agents, &agentCount, onUpdate, onSetActive, onSetEnabled, onDelete, onExternalPush);
 
-    // Show cached data immediately; fetch will happen at first loop() iteration
+    // Show cached data immediately; fetch will happen at first loop() iteration.
+    // token-tracker.local (mDNS, started above) survives DHCP IP changes,
+    // so it's a more durable hint than WiFi.localIP() would be.
     if (activeIdx >= 0)
         display_render(&agents[activeIdx]);
     else
-        display_renderIdle(WiFi.localIP().toString().c_str());
+        display_renderIdle("token-tracker.local");
 
     for (int i = 0; i < agentCount; i++) pendingFetch[i] = true;
 }
 
 // ─── Loop ─────────────────────────────────────────────────────────────────────
 void loop() {
-    webserver_loop();
-
+    // AsyncWebServer handles requests off its own task — nothing to service
+    // here (the old ws.cleanupClients() call is gone with the WebSocket).
     unsigned long now = millis();
 
     // Check (cheaply) which agents are due for a fetch, honoring per-agent intervals
