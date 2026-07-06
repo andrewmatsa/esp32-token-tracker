@@ -4,7 +4,14 @@
 
 struct Agent {
     char     name[32];       // display name: "Claude", "Cursor", "Codex"
-    char     model[48];      // model id: "claude-opus-4-8", "gpt-4o"; for Claude, user-editable probe model
+    char     model[48];      // Codex/Cursor: model id used as their filter ("gpt-4o", etc).
+                             // Claude: real last-used model, written ONLY by the PC daemon's
+                             // /push (tools/usage-daemon.py's JSONL scan) — empty if unknown.
+                             // Never set by the web UI or the on-device probe.
+    char     probeModel[48]; // Claude only: user-chosen rate-limit probe target (fetcher.cpp's
+                             // syncAnthropic() sends this model in its /v1/messages probe body,
+                             // since Anthropic's rate limits are model-specific). Set via the
+                             // web UI's dropdown; unrelated to what the user is actually using.
     char     apiKey[512];    // stored on device, used for auto-fetch; never sent back to browser.
                              // 512, not 128 — Claude Code OAuth tokens (from `claude setup-token`)
                              // are long JWT-style strings, routinely 300-1000+ chars; a smaller

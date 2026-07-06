@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <SPIFFS.h>
 #include <time.h>
 #include <esp_log.h>
@@ -170,6 +171,19 @@ void setup() {
 
     // Sync NTP for countdown accuracy (UTC; display shows remaining seconds)
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+
+    // Advertise as token-tracker.local so the PC companion daemon
+    // (tools/usage-daemon.py) doesn't need a hardcoded/changing IP — DHCP
+    // leases shift, but the mDNS name doesn't. Requires the querying OS to
+    // support mDNS (.local) resolution — built in on macOS/Linux, needs
+    // Bonjour or Windows 10's native multicast DNS support on Windows;
+    // usage-daemon.py's --ip flag still accepts a plain IP as a fallback.
+    if (MDNS.begin("token-tracker")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[MDNS] Responder started: token-tracker.local");
+    } else {
+        Serial.println("[MDNS] Failed to start");
+    }
 
     // Load persisted agents from NVS
     agentCount = storage_load(agents);

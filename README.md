@@ -27,6 +27,8 @@ and shows live usage on its screen.
 - 🌉 **Companion bridge script** (`tools/usage-daemon.py`) for providers
   whose auth can't be typed into the device directly — Claude Code's local
   OAuth session and Codex CLI's local login — plus Cursor IDE's local token.
+  The web UI generates the exact command to run (device IP, agent slot
+  index, configurable push interval) — just copy and paste.
 
 ## Hardware
 

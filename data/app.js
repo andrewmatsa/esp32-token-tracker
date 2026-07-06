@@ -56,13 +56,39 @@ function isDeepSeek(name) { return (name || '').toLowerCase().startsWith('deepse
 // account-specific and can't be listed in a fixed dropdown).
 function hasModelPicker(name) { return isAnthropic(name) || isCursor(name) || isCodex(name); }
 // Providers whose data has two rate-limit windows (short + long), rendered
-// as two cards instead of one on the display preview. Claude used to
-// qualify (Pro/Max OAuth session's unified 5h/7d headers), but Anthropic
-// disabled OAuth auth for third-party clients (~Feb 2026) — the device now
-// authenticates Claude with a regular API key, which only exposes a single
-// per-minute tier rate-limit window, so it renders like everyone else.
-function hasDualWindow(agent) { return isCodex(agent.name) && !agent.model; }
+// as two cards instead of one on the display preview. Claude qualifies via
+// the Pro/Max subscription's unified 5h/7d headers, pushed by the PC
+// companion daemon (tools/usage-daemon.py, using the Claude Code login
+// OAuth token) — but only once used7d/resetEpoch7d actually arrive. A plain
+// on-device API-key probe (fetcher.cpp's syncAnthropic()) never populates
+// those fields, so Claude falls back to the single "Rate Limit" card below —
+// mirrors display.cpp's `has7d` check in renderClaudeUsage().
+function hasDualWindow(agent) {
+  if (isAnthropic(agent.name)) return (agent.used7d > 0 || agent.resetEpoch7d > 0);
+  return isCodex(agent.name) && !agent.model;
+}
 function hasAutoSync(name) { return isOpenAI(name) || isDeepSeek(name) || isAnthropic(name) || isCursor(name) || isCodex(name); }
+// Providers the PC companion daemon (tools/usage-daemon.py) can push usage
+// for — their --push slug is just the lowercase preset id.
+function daemonSlugFor(name) {
+  if (isAnthropic(name)) return 'claude';
+  if (isCursor(name))    return 'cursor';
+  if (isCodex(name))     return 'codex';
+  return null;
+}
+// The daemon defaults --ip to "token-tracker.local" (the device's mDNS
+// name, advertised by main.cpp) and --interval to 120 — so the common case
+// needs neither flag spelled out. Both stay overridable on the command line
+// (e.g. a plain IP, if the user's OS can't resolve .local names).
+const DAEMON_DEFAULT_INTERVAL = 120;
+function daemonCommandFor(name, index, intervalValue) {
+  const slug = daemonSlugFor(name);
+  if (!slug) return '';
+  const interval = parseInt(intervalValue, 10);
+  const intervalArg = Number.isFinite(interval) && interval > 0 ? interval : DAEMON_DEFAULT_INTERVAL;
+  const intervalFlag = intervalArg === DAEMON_DEFAULT_INTERVAL ? '' : ` --interval ${intervalArg}`;
+  return `python tools/usage-daemon.py --push ${slug}:${index}${intervalFlag}`;
+}
 
 function presetFor(name) {
   const lower = (name || '').toLowerCase();
@@ -204,7 +230,7 @@ function claudeSpriteSvg(color) {
 // wholesale on every tick, so comparing against the DOM isn't an option.
 let prevUsageValues = {};
 
-function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine) {
+function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine, subLine = '') {
   const changed = prevUsageValues[key] !== undefined && prevUsageValues[key] !== bigValueText;
   prevUsageValues[key] = bigValueText;
   return `
@@ -214,35 +240,84 @@ function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine)
         <span class="disp-usage-pill">${pillLabel}</span>
       </div>
       <div class="disp-usage-bar-wrap"><div class="disp-usage-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      ${subLine ? `<div class="disp-usage-sub">${subLine}</div>` : ''}
       <div class="disp-usage-reset">${resetLine}</div>
     </div>`;
 }
 
+// Mirrors display.cpp's renderClaudeUsage() info line: real last-used model
+// (left) + estimated cost for today (right). Both come ONLY from the PC
+// daemon's JSONL scan (usage-daemon.py's claude_scan_usage_today()) — a
+// keyed agent's rate-limit probe target (active.probeModel) is a separate,
+// unrelated field and must never appear here, or this line would
+// misrepresent which model the user is actually using. Cost is not a real
+// Pro/Max charge — Anthropic doesn't expose one for the flat subscription.
+function claudeInfoLine(active) {
+  if (!isAnthropic(active.name)) return '';
+  const hasModel = !!active.model;
+  const hasCost  = active.balance != null && active.balance >= 0;
+  if (!hasModel && !hasCost) return '';
+  return `
+    <div class="disp-usage-info">
+      <span class="disp-usage-info-model">${hasModel ? active.model : ''}</span>
+      <span class="disp-usage-info-cost">${hasCost ? '$' + active.balance.toFixed(2) + ' today' : ''}</span>
+    </div>`;
+}
+
+// Minimal loading placeholder — just the status text + bouncing dots
+// (appended separately below), no "Active" banner and no model/cost info
+// line, so a syncing/stale agent doesn't show anything not yet confirmed.
+function loadingCards(active) {
+  const statusText = hasAutoSync(active.name) ? 'Syncing' : 'No auto-sync';
+  return `<div class="disp-syncing">${statusText}</div>`;
+}
+
 function renderUsageScreen(active, preset) {
   let cards;
+  let isLoading = false;
 
   if (active.enabled === false) {
+    isLoading = true;
     cards = `
       <div style="text-align:center;font-size:16px;color:#666;font-weight:bold;margin-top:14px">Disabled</div>
       <div class="disp-syncing">Auto-sync paused</div>`;
   } else if (hasDualWindow(active)) {
+    const claude = isAnthropic(active.name);
     const pct5h = Math.min(100, Math.max(0, active.used || 0));
     const pct7d = Math.min(100, Math.max(0, active.used7d || 0));
-    cards = renderUsageCard(`${active.name}:current`, 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch)) +
-            renderUsageCard(`${active.name}:weekly`,  'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
+    cards = renderUsageCard(`${active.name}:current`, claude ? '5h' : 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch)) +
+            renderUsageCard(`${active.name}:weekly`,  claude ? '7d' : 'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
   } else {
     const hasLimit   = active.limit > 0;
     const hasUsed    = active.used > 0;
     const hasBalance = active.balance != null && active.balance >= 0;
     const resetLine  = resetLineFor(active.resetEpoch);
+    // A window whose reset time has already passed without a fresh sync
+    // landing yet holds stale numbers (e.g. a frozen "0%" from before the
+    // window rolled over) — showing them next to "Reset due" is misleading,
+    // so treat this exactly like "no data yet" until the next fetch arrives.
+    const isStale = active.resetEpoch > 0 && active.resetEpoch <= Math.floor(Date.now() / 1000);
 
-    if (hasLimit) {
+    if (isStale) {
+      isLoading = true;
+      cards = loadingCards(active);
+    } else if (hasLimit) {
       const pct = Math.min(100, Math.round(active.used * 100 / active.limit));
       // Claude's percentage here is a per-minute tier rate limit, not a
       // monthly budget like OpenAI/Cursor/Codex — label it accordingly,
       // matching the physical display's "Rate Limit" pill.
       const label = isAnthropic(active.name) ? 'Rate Limit' : 'Monthly';
-      cards = renderUsageCard(`${active.name}:monthly`, label, pct + '%', pct, usageBarColor(pct), resetLine);
+      // Raw "used / limit tokens" sub-line + limit-reached note — mirrors
+      // display.cpp's hasLimit branch, which shows both the numbers and a
+      // "LIMIT REACHED" banner, not just the percentage.
+      const subLine = `${formatTokens(active.used)} / ${formatTokens(active.limit)} tokens` +
+        (pct >= 100 ? ' — <span style="color:#ef4444;font-weight:600">LIMIT REACHED</span>' : '');
+      cards = renderUsageCard(`${active.name}:monthly`, label, pct + '%', pct, usageBarColor(pct), resetLine, subLine);
+    } else if (hasUsed && hasBalance) {
+      // Both a token count and a balance (e.g. future providers) — mirrors
+      // display.cpp's combined "Used: X tokens" + "Balance: $Y" branch.
+      cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine,
+        'Balance: $' + active.balance.toFixed(2));
     } else if (hasUsed) {
       cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine);
     } else if (hasBalance) {
@@ -253,10 +328,8 @@ function renderUsageScreen(active, preset) {
       // no separate "synced" flag, so resetEpoch>0 is the proxy for that).
       cards = renderUsageCard(`${active.name}:used`, 'Used', '0', 0, preset.color, resetLine);
     } else {
-      const statusText = hasAutoSync(active.name) ? 'Syncing' : 'No auto-sync';
-      cards = `
-        <div style="text-align:center;font-size:16px;color:#22c55e;font-weight:bold;margin-top:14px">Active</div>
-        <div class="disp-syncing">${statusText}</div>`;
+      isLoading = true;
+      cards = loadingCards(active);
     }
   }
 
@@ -268,13 +341,23 @@ function renderUsageScreen(active, preset) {
     ? claudeSpriteSvg(preset.color)
     : `<span class="disp-usage-sprite" style="color:${preset.color}">${preset.icon}</span>`;
 
+  // Claude's TFT screen (display.cpp renderClaudeUsage()) draws neither the
+  // sprite nor the "Usage" title while loading/disabled — this preview must
+  // mirror that exactly, not just approximate it. Other providers' TFT
+  // screen (display_render()'s generic branch) always keeps its header
+  // (agent name + model) regardless of state, so only hide it here for
+  // Claude specifically.
+  const hideHeader = isLoading && isAnthropic(active.name);
   return `
     <div class="disp-usage-wrap">
       <div class="disp-usage-header">
-        ${sprite}
-        <span class="disp-usage-title">${active.name}</span>
+        ${hideHeader ? '' : sprite}
+        ${hideHeader ? '' : `<span class="disp-usage-title">${active.name}</span>`}
       </div>
-      ${cards}
+      <div class="disp-usage-body">
+        ${isLoading ? '' : claudeInfoLine(active)}
+        ${cards}
+      </div>
     </div>`;
 }
 
@@ -336,10 +419,73 @@ function buildCard(ag, i) {
 
   if (hasModelPicker(ag.name)) {
     card.querySelector('.claude-config-row').hidden = false;
-    const modelInput = card.querySelector('.inp-model');
-    modelInput.value = ag.model || '';
-    modelInput.placeholder = isAnthropic(ag.name) ? 'Default (claude-haiku-4-5)' : 'Default / all models';
-    card.querySelector('.inp-interval').value = ag.syncInterval || '';
+    const modelInput  = card.querySelector('.inp-model');
+    const modelSelect = card.querySelector('.inp-model-select');
+    const modelLabel  = card.querySelector('.model-label');
+    // "Model" is ambiguous for Claude — this field only picks which model's
+    // rate limit to check, not what the user is actually using — so label it
+    // explicitly to avoid the confusion a bare "Model" caused previously.
+    modelLabel.textContent = isAnthropic(ag.name) ? 'Rate-limit model' : 'Model';
+
+    if (isAnthropic(ag.name) && ag.hasKey) {
+      // Keyed Claude agent: `probeModel` is sent straight into the
+      // /v1/messages probe body (fetcher.cpp syncAnthropic) to read that
+      // model's own rate-limit headers — an invalid/typo'd name makes
+      // Anthropic reject the probe outright (no limits at all, silently).
+      // A hard <select> of known-valid models prevents that failure mode
+      // entirely; free text isn't safe here the way it is for Cursor/Codex's
+      // cosmetic bucket filters. This is NOT the same as `model` (the real
+      // last-used model, shown elsewhere) — picking a value here only
+      // changes which model's rate limit is checked, not what's "in use."
+      modelInput.hidden = true;
+      modelSelect.hidden = false;
+      if (!modelSelect.dataset.populated) {
+        const claudeModels = PRESETS.find(p => p.id === 'claude').models;
+        modelSelect.innerHTML = '<option value="">Default (claude-haiku-4-5)</option>'
+          + claudeModels.map(m => `<option value="${m}">${m}</option>`).join('');
+        modelSelect.dataset.populated = '1';
+      }
+      modelSelect.value = ag.probeModel || '';
+    } else {
+      modelSelect.hidden = true;
+      modelInput.hidden = false;
+      modelInput.value = ag.model || '';
+      if (isAnthropic(ag.name)) {
+        // Keyless Claude agent: the PC daemon (tools/usage-daemon.py) pushes
+        // the real last-used model from local Claude Code logs every cycle —
+        // manual entry here would just get overwritten, so disable the field
+        // instead of leaving a misleading editable box.
+        modelInput.disabled = true;
+        modelInput.placeholder = 'Auto-detected by daemon (real last-used model)';
+      } else {
+        modelInput.disabled = false;
+        modelInput.placeholder = 'Default / all models';
+      }
+    }
+    const intervalInput = card.querySelector('.inp-interval');
+    intervalInput.value = ag.syncInterval || '';
+
+    // Ready-to-paste daemon command for keyless (daemon-driven) agents —
+    // updates live as the interval field changes, no save round-trip needed.
+    const cmdRow = card.querySelector('.daemon-cmd-row');
+    const cmdEl  = card.querySelector('.daemon-cmd');
+    if (!ag.hasKey && daemonSlugFor(ag.name)) {
+      cmdRow.hidden = false;
+      cmdEl.textContent = daemonCommandFor(ag.name, i, intervalInput.value);
+      // token-tracker.local needs mDNS support on the machine running the
+      // daemon (built in on macOS/Linux; Windows needs Bonjour or its own
+      // native mDNS) — surface the real IP as a hover fallback in case it
+      // doesn't resolve, without cluttering the copy-paste command itself.
+      cmdEl.title = `If "token-tracker.local" doesn't resolve, add: --ip ${location.hostname}`;
+      intervalInput.oninput = () => {
+        cmdEl.textContent = daemonCommandFor(ag.name, i, intervalInput.value);
+      };
+      card.querySelector('.btn-copy-cmd').onclick = () => {
+        navigator.clipboard.writeText(cmdEl.textContent);
+      };
+    } else {
+      cmdRow.hidden = true;
+    }
   }
 
   // State classes — usage stats themselves are shown on the device's own
@@ -381,9 +527,16 @@ function saveAgent(i) {
   if (apiKey) msg.apiKey = apiKey;
 
   if (hasModelPicker(name)) {
-    const model = card.querySelector('.inp-model').value.trim();
+    const modelSelect = card.querySelector('.inp-model-select');
     const interval = parseInt(card.querySelector('.inp-interval').value, 10);
-    if (model) msg.model = model;
+    if (!modelSelect.hidden) {
+      // Keyed Claude agent: this is the rate-limit probe target, a
+      // separate field from `model` (the real last-used model).
+      if (modelSelect.value) msg.probeModel = modelSelect.value;
+    } else {
+      const model = card.querySelector('.inp-model').value.trim();
+      if (model) msg.model = model;
+    }
     msg.syncInterval = Number.isFinite(interval) && interval > 0 ? interval : 0;
   }
 

@@ -22,6 +22,9 @@ int storage_load(Agent agents[MAX_AGENTS]) {
         makeKey(key, i, "model");
         prefs.getString(key, agents[count].model, sizeof(agents[count].model));
 
+        makeKey(key, i, "pmodel");
+        prefs.getString(key, agents[count].probeModel, sizeof(agents[count].probeModel));
+
         makeKey(key, i, "key");
         prefs.getString(key, agents[count].apiKey, sizeof(agents[count].apiKey));
 
@@ -64,6 +67,7 @@ void storage_save(int index, const Agent& agent) {
 
     makeKey(key, index, "name");   prefs.putString(key, agent.name);
     makeKey(key, index, "model");  prefs.putString(key, agent.model);
+    makeKey(key, index, "pmodel"); prefs.putString(key, agent.probeModel);
     makeKey(key, index, "key");    prefs.putString(key, agent.apiKey);
     makeKey(key, index, "used");   prefs.putUInt(key, agent.used);
     makeKey(key, index, "limit");  prefs.putUInt(key, agent.limit);
@@ -82,7 +86,7 @@ void storage_delete(int index, Agent agents[MAX_AGENTS], int& count) {
     // Remove from NVS
     prefs.begin("ttracker", false);
     char key[16];
-    const char* fields[] = {"name","model","key","used","limit","reset","bal","active","en","u7d","r7d","ivl"};
+    const char* fields[] = {"name","model","pmodel","key","used","limit","reset","bal","active","en","u7d","r7d","ivl"};
     for (auto f : fields) {
         makeKey(key, index, f);
         prefs.remove(key);

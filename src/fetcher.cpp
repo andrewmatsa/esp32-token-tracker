@@ -1,4 +1,5 @@
 #include "fetcher.h"
+#include "config.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -171,16 +172,24 @@ static bool syncDeepSeek(Agent& agent) {
 }
 
 // ─── Anthropic (Claude) — tier rate-limit header probe ───────────────────────
-// Uses a regular sk-ant-api03... developer API key via `x-api-key`. The
-// Pro/Max-plan "unified" 5h/7d usage windows required a Claude Code OAuth
-// session token (`claude setup-token`) sent as `Authorization: Bearer` —
-// Anthropic disabled that for third-party clients (~Feb 2026; returns
-// "OAuth authentication is currently not supported" regardless of header
-// shape, confirmed via serial log — not something any header/encoding fix
-// on our side can work around). A plain API key has no account-wide
-// balance/usage endpoint, so the closest available signal is the
-// account tier's standard per-minute token rate limit, exposed via
-// `anthropic-ratelimit-tokens-*` response headers on every request.
+// On-device path: a regular sk-ant-api03... developer API key via `x-api-key`.
+// A plain API key has no account-wide balance/usage endpoint, so the closest
+// available signal is the account tier's standard per-minute token rate limit,
+// exposed via `anthropic-ratelimit-tokens-*` response headers on every request.
+//
+// The Pro/Max-plan "unified" 5h/7d subscription windows
+// (`anthropic-ratelimit-unified-*`) are NOT reachable this way. They require
+// the Claude Code *login* OAuth token (`claudeAiOauth.accessToken` from
+// ~/.claude/.credentials.json) sent as `Authorization: Bearer`, plus the
+// `anthropic-beta: oauth-2025-04-20` header and a `claude-code/...`
+// User-Agent. That token still works — the earlier "OAuth disabled" failure
+// was specifically the `claude setup-token` flow, a *different* token, which
+// Anthropic did disable for third-party clients (~Feb 2026). The login token
+// lives on the PC, expires every few hours, and is refreshed there by Claude
+// Code itself, so the device can't use it directly — the PC companion
+// (tools/usage-daemon.py, `claude` provider) reads it and pushes the 5h/7d
+// windows to this device via POST /push instead. Give the Claude agent an
+// empty API key to use that path; a pasted key uses this probe as fallback.
 
 // Parses an RFC3339 UTC timestamp ("YYYY-MM-DDTHH:MM:SSZ", the format
 // Anthropic uses for `anthropic-ratelimit-*-reset`) into a Unix epoch.
@@ -221,9 +230,11 @@ static bool syncAnthropic(Agent& agent) {
     http.addHeader("User-Agent", "token-tracker-esp32/1.0");
     http.setTimeout(8000);
 
-    // agent.model doubles as the user-configurable probe model for Claude
-    // (set via the web UI); falls back to Haiku if left blank.
-    const char* model = (strlen(agent.model) > 0) ? agent.model : "claude-haiku-4-5";
+    // agent.probeModel is the user-configurable rate-limit probe target for
+    // Claude (set via the web UI); falls back to Haiku if left blank.
+    // agent.model is a separate field — the real last-used model, owned
+    // exclusively by the PC daemon's /push — never read or written here.
+    const char* model = (strlen(agent.probeModel) > 0) ? agent.probeModel : ANTHROPIC_DEFAULT_PROBE_MODEL;
     char payload[160];
     snprintf(payload, sizeof(payload),
              "{\"model\":\"%s\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\".\"}]}",

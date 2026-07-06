@@ -69,12 +69,18 @@
     </div>
 
     <div class="claude-config-row" hidden>
-      <label>Model
+      <label><span class="model-label">Model</span>
+        <select class="inp-model-select" hidden></select>
         <input class="inp-model" type="text" placeholder="Default / all models">
       </label>
       <label>Update every (sec)
         <input class="inp-interval" type="number" min="10" placeholder="120">
       </label>
+    </div>
+
+    <div class="daemon-cmd-row" hidden>
+      <code class="daemon-cmd"></code>
+      <button class="btn-copy-cmd" type="button">Copy</button>
     </div>
 
   </div>

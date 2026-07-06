@@ -26,6 +26,7 @@ static String buildStateJson(Agent agents[MAX_AGENTS], int count) {
         JsonObject o = arr.add<JsonObject>();
         o["name"]       = agents[i].name;
         o["model"]      = agents[i].model;
+        o["probeModel"] = agents[i].probeModel;
         o["hasKey"]     = (strlen(agents[i].apiKey) > 0); // never send key back to browser
         o["used"]       = agents[i].used;
         o["limit"]      = agents[i].limit;
@@ -71,9 +72,14 @@ static void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 
         strlcpy(a.name, doc["name"] | "", sizeof(a.name));
 
-        // Model is auto-detected by fetcher; only override if explicitly provided
+        // Codex/Cursor: `model` is their manual usage-bucket filter, settable here.
+        // Claude: `model` is real-last-used, owned only by the daemon's /push — never
+        // accepted from the browser; `probeModel` is Claude's rate-limit target instead.
         const char* newModel = doc["model"] | "";
         if (strlen(newModel) > 0) strlcpy(a.model, newModel, sizeof(a.model));
+
+        const char* newProbeModel = doc["probeModel"] | "";
+        if (strlen(newProbeModel) > 0) strlcpy(a.probeModel, newProbeModel, sizeof(a.probeModel));
 
         // Only update API key if a new non-empty value was provided
         const char* newKey = doc["apiKey"] | "";
@@ -140,6 +146,17 @@ void webserver_init(Agent agents[MAX_AGENTS], int* count,
             uint32_t reset      = doc["resetEpoch"] | 0;
             uint32_t used7d     = doc["used7d"] | 0;
             uint32_t resetEpoch7d = doc["resetEpoch7d"] | 0;
+            // Optional: real last-used model / estimated cost (currently Claude
+            // only — the daemon omits these keys entirely for providers that
+            // don't resolve them, so other agents' existing values are
+            // untouched). `model` and `probeModel` are separate fields now
+            // (storage.h), so this can apply unconditionally — a keyed agent's
+            // manual rate-limit probe target lives in `probeModel` and is never
+            // touched here, regardless of whether the daemon also runs for it.
+            if (doc["model"].is<const char*>())
+                strlcpy(_agents[idx].model, doc["model"], sizeof(_agents[idx].model));
+            if (doc["balance"].is<float>())
+                _agents[idx].balance = doc["balance"];
             if (_cbPush) _cbPush(idx, used, limit, reset, used7d, resetEpoch7d);
             req->send(200, "application/json", "{\"ok\":true}");
         });

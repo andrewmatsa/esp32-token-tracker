@@ -31,3 +31,9 @@
 
 // ─── Auto-fetch ───────────────────────────────────────────────────────────────
 #define FETCH_INTERVAL_MS  600000UL // 10 minutes between background syncs
+
+// ─── Anthropic probe defaults ─────────────────────────────────────────────────
+// Model used by syncAnthropic() when the user leaves the web UI's Model
+// dropdown on "Default". Shared with display.cpp so the TFT/web preview can
+// show this name when agent.model is empty instead of leaving it blank.
+#define ANTHROPIC_DEFAULT_PROBE_MODEL  "claude-haiku-4-5"

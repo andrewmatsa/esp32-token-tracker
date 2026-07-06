@@ -2,12 +2,9 @@
 
 One companion PC script (`usage-daemon.py`) that auto-fetches usage for
 providers whose auth tokens either can't be typed into the device directly
-(Codex's local login) or are easiest to read straight from the app's own
-local storage (Cursor IDE). One process, one port for browser testing.
-
-**Claude isn't covered here** — see step 3 below. It authenticates
-on-device with a regular API key; there's no local credential file for a
-daemon to read automatically the way there is for Cursor/Codex.
+(Claude's and Codex's local logins) or are easiest to read straight from the
+app's own local storage (Cursor IDE). One process, one port for browser
+testing.
 
 **Requires:** Python 3 (stdlib only — no `pip install`).
 
@@ -22,18 +19,18 @@ Agent slots are numbered by the order they were added in the web UI,
 starting at 0. E.g. if you added Claude, Cursor, Codex in that order, their
 indexes are `0`, `1`, `2`.
 
-## 3. Add the agents with an empty API key (Codex) or a pasted key (Claude/Cursor)
+## 3. Add the agents with an empty API key (Claude/Codex) or a pasted key (Cursor)
 
-- **Claude**: paste a **regular developer API key** (`sk-ant-api03-...`
-  from console.anthropic.com) directly into the device's API key field —
-  no daemon needed, the device syncs on its own. ⚠️ Anthropic disabled
-  OAuth session tokens (`claude setup-token`) for third-party clients
-  around February 2026 — `Authorization: Bearer <oauth-token>` now returns
-  `"OAuth authentication is currently not supported"` regardless of header
-  shape, so that path (and this daemon's old Claude support, which relied
-  on it) no longer works. With a regular API key the device reports the
-  account tier's per-minute token rate limit instead of the old Pro/Max
-  5h/7d percentages (see `src/fetcher.cpp`'s `syncAnthropic()`).
+- **Claude**: add a "Claude" agent and **leave the API key field empty** —
+  the daemon supplies the usage. It reads the Claude Code *login* OAuth
+  token from `~/.claude/.credentials.json` and reports the real Pro/Max
+  **5h + 7d** subscription windows (see "How each provider works" below).
+  Keep Claude Code signed in — it refreshes that token in the file as it
+  runs; the daemon just reads the freshest copy each cycle.
+  *(Alternatively, paste a regular developer API key `sk-ant-api03-...`
+  for on-device sync with no daemon — but a plain API key only exposes the
+  account tier's per-minute rate limit, one window, not the 5h/7d
+  subscription percentages. See `src/fetcher.cpp`'s `syncAnthropic()`.)*
 - **Codex**: add a "Codex" agent — the API key field is disabled entirely
   (there's no key at all; usage comes from Codex CLI's own local login).
 - **Cursor**: works either way — paste the access token directly into the
@@ -47,24 +44,33 @@ leave it blank for the default behavior.
 ## 4. Run the daemon
 
 ```bash
-python tools/usage-daemon.py --ip 192.168.1.50 --push cursor:1 codex:2
+python tools/usage-daemon.py --push claude:0 cursor:1 codex:2
 ```
 
 Only include the providers you've actually signed into. Use `--once` for a
 single test cycle:
 
 ```bash
-python tools/usage-daemon.py --ip 192.168.1.50 --push codex:2 --once
+python tools/usage-daemon.py --push claude:0 --once
+```
+
+By default the daemon talks to `token-tracker.local` — the device's mDNS
+name (advertised by the firmware itself, so it survives DHCP lease/IP
+changes). If your OS can't resolve `.local` names (Windows without Bonjour
+or its own mDNS support), pass a plain IP instead:
+
+```bash
+python tools/usage-daemon.py --ip 192.168.1.50 --push claude:0
 ```
 
 Options:
 
-| Flag         | Default | Description                                              |
-| ------------ | ------- | --------------------------------------------------------- |
-| `--ip`       | —       | Device IP (required unless `--serve`)                      |
-| `--push`     | —       | One or more `provider:index[:model]` entries (required unless `--serve`) |
-| `--interval` | `120`   | Seconds between probe/push cycles                          |
-| `--once`     | off     | Run a single cycle and exit                                |
+| Flag         | Default               | Description                                              |
+| ------------ | ---------------------- | --------------------------------------------------------- |
+| `--ip`       | `token-tracker.local`  | Device address — IP or hostname                            |
+| `--push`     | —                       | One or more `provider:index[:model]` entries (required unless `--serve`) |
+| `--interval` | `120`                   | Seconds between probe/push cycles                          |
+| `--once`     | off                     | Run a single cycle and exit                                |
 
 ### Filtering to one model (Cursor / Codex)
 
@@ -87,14 +93,12 @@ python tools/usage-daemon.py --serve
 ```
 
 ```
+GET http://127.0.0.1:8765/usage?provider=claude
 GET http://127.0.0.1:8765/usage?provider=cursor[&model=gpt-4]
 GET http://127.0.0.1:8765/usage?provider=codex[&model=gpt-4o]
 ```
 
-(Claude has no bridge entry here since it's no longer a daemon provider —
-`temporary.html`'s Claude preview still needs its own look at whether a
-regular API key call needs the same direct-browser-access header/CORS
-handling the old OAuth path required; not covered by this change.)
+(Claude is account-wide 5h + 7d — no `&model=` dimension.)
 
 | Flag      | Default | Description                                                        |
 | --------- | ------- | -------------------------------------------------------------------- |
@@ -103,13 +107,31 @@ handling the old OAuth path required; not covered by this change.)
 
 ## How each provider works
 
-**Claude** — not a daemon provider (see step 3 above). Handled entirely
-on-device by `src/fetcher.cpp`'s `syncAnthropic()`: a minimal 1-token
-request to `POST /v1/messages` with the regular API key via `x-api-key`,
-reading the standard `anthropic-ratelimit-tokens-limit` /
-`-tokens-remaining` / `-tokens-reset` response headers (account tier's
-per-minute rate limit — the OAuth-only Pro/Max 5h/7d "unified" headers
-this used to read are no longer reachable from third-party clients).
+**Claude** — reads the Claude Code *login* OAuth token
+(`claudeAiOauth.accessToken`) from `~/.claude/.credentials.json`, then makes
+a minimal 1-token `POST /v1/messages` request that impersonates Claude Code:
+`Authorization: Bearer <token>` plus `anthropic-beta: oauth-2025-04-20` and a
+`User-Agent: claude-code/...` header (the server gates the subscription
+headers on these). The response carries the account's real Pro/Max windows
+via `anthropic-ratelimit-unified-5h-utilization` / `-5h-reset` /
+`-7d-utilization` / `-7d-reset` (utilization is a `0..1` fraction → percent),
+which the device shows as two cards. This is **not** the `claude setup-token`
+OAuth flow Anthropic disabled for third-party clients (~Feb 2026) — that's a
+different token; the interactive login token still works. No token refresh
+logic here: Claude Code refreshes the token in the file as it runs, and the
+daemon reads the freshest copy each cycle. If it expires (HTTP 401), the
+daemon logs an error asking you to sign in to Claude Code again.
+(For the alternative on-device path — a plain API key via `x-api-key`,
+reporting only the per-minute `anthropic-ratelimit-tokens-*` window — see
+`src/fetcher.cpp`'s `syncAnthropic()`.)
+
+The daemon also scans local Claude Code JSONL transcripts
+(`~/.claude/projects/**/*.jsonl`) to show the **most recently used model**
+and an **estimated cost for today**. This cost is **not a real Pro/Max
+charge** — Anthropic doesn't expose one, since the subscription is a flat
+monthly fee, not pay-as-you-go. It's computed locally from today's actual
+token counts (input/output/cache-read/cache-write, deduplicated by message
+ID) at standard per-model API rates, purely as a spend-awareness estimate.
 
 **Cursor** — reads `cursorAuth/accessToken` from Cursor IDE's local SQLite
 state database (`state.vscdb`, path varies by OS), then

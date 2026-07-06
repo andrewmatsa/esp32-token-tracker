@@ -1,35 +1,38 @@
 #!/usr/bin/env python3
 """
-Unified usage daemon for token-tracker (Cursor, Codex).
+Unified usage daemon for token-tracker (Claude, Cursor, Codex).
 
-Claude is not covered here — it authenticates on-device with a regular
-API key (see the project's tools/README.md), since Anthropic disabled
-OAuth session tokens (`claude setup-token`) for third-party clients
-around February 2026, which is what this daemon's Claude support relied
-on. There's no local-file credential to auto-read for a regular API key,
-so routing it through a daemon adds no value over pasting it directly
-into the device's web UI.
+Each provider stores its own login/token locally and exposes usage via its
+own probe. This script reads whichever ones you configure, on one process,
+one port — instead of running a separate script per provider:
 
-Each remaining provider stores its own login/token locally (Cursor IDE's
-SQLite state db, Codex CLI's auth.json) and exposes usage via its own
-probe (Cursor's /auth/usage, Codex's /wham/usage). This script reads
-whichever ones you configure, on one process, one port — instead of
-running two separate scripts.
+  - Claude: reads the Claude Code *login* OAuth token from
+    ~/.claude/.credentials.json and probes /v1/messages for the real
+    Pro/Max 5h + 7d subscription windows (unified rate-limit headers).
+    This is the interactive-login token, NOT the `claude setup-token`
+    flow Anthropic disabled for third-party clients (~Feb 2026) — that's
+    a different token. Requires impersonating Claude Code (User-Agent +
+    oauth-2025-04-20 beta header). Same approach as Clawdmeter.
+  - Cursor: reads cursorAuth/accessToken from Cursor IDE's SQLite state db,
+    probes /auth/usage.
+  - Codex: reads tokens from Codex CLI's auth.json, probes /wham/usage.
 
 Stdlib only — no pip install required.
 
 Push mode — pushes each configured provider to its own agent slot on the
 device, in a single shared loop. Each --push entry is provider:index, or
 provider:index:model to filter to one model bucket instead of the
-account-wide total:
-    python usage-daemon.py --ip 192.168.1.50 --push cursor:1 codex:2:gpt-4o [--interval 120] [--once]
+account-wide total (Claude ignores the model filter):
+    python usage-daemon.py --ip 192.168.1.50 --push claude:0 cursor:1 codex:2:gpt-4o [--interval 120] [--once]
 
 Bridge mode — one local server for browser-based testing (temporary.html),
-serving both providers on one port via ?provider=:
+serving every provider on one port via ?provider=:
     python usage-daemon.py --serve [--port 8765] [--cache 60]
+    GET http://127.0.0.1:8765/usage?provider=claude
     GET http://127.0.0.1:8765/usage?provider=cursor[&model=gpt-4]
     GET http://127.0.0.1:8765/usage?provider=codex[&model=gpt-4o]
 
+Claude: account-wide 5h + 7d windows, no model dimension (?model= ignored).
 Cursor: ?model= filters to one model key from /auth/usage (e.g. "gpt-4") —
 omit it to sum all models (the default). Codex: ?model= switches from the
 account-wide rate-limit windows to that model's monthly credit total from
@@ -44,6 +47,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import sqlite3
 import sys
 import time
@@ -55,6 +59,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 BROWSER_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+# Claude's OAuth rate-limit probe only returns the Pro/Max "unified" 5h/7d
+# windows when the request looks like it came from Claude Code itself — the
+# server gates the anthropic-ratelimit-unified-* headers on a claude-code
+# User-Agent plus the oauth-2025-04-20 beta header.
+CLAUDE_CODE_USER_AGENT = "claude-code/2.1.5"
 
 
 def log(msg: str) -> None:
@@ -289,9 +299,231 @@ def codex_probe(model: str = None) -> dict:
     return codex_probe_rate_limit()
 
 
+# ─── Claude ───────────────────────────────────────────────────────────────
+# Reads the Claude Code *login* OAuth token (claudeAiOauth.accessToken) from
+# ~/.claude/.credentials.json and makes a 1-token probe to /v1/messages. The
+# response carries the account's real Pro/Max subscription usage via the
+# anthropic-ratelimit-unified-5h/7d-utilization headers (fraction 0..1).
+#
+# This is NOT the `claude setup-token` OAuth flow that Anthropic disabled for
+# third-party clients (~Feb 2026) — that's a different token. The interactive
+# Claude Code login token still works, provided the request impersonates
+# Claude Code (User-Agent + oauth-2025-04-20 beta header). Same approach as
+# Clawdmeter (https://github.com/HermannBjorgvin/Clawdmeter).
+#
+# Claude Code refreshes this token in the file as it runs; we just read the
+# freshest copy each cycle. No refresh logic here — if it expires (401), the
+# user re-runs Claude Code.
+
+def claude_credentials_path() -> str:
+    # macOS Claude Code stores the token in the Keychain (service
+    # "Claude Code-credentials"), not this file — TODO if macOS support is
+    # needed. The file path covers Windows and Linux.
+    return os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+
+
+def claude_read_token() -> str:
+    path = claude_credentials_path()
+    if not os.path.exists(path):
+        raise RuntimeError(f"Claude credentials not found at {path}. Sign in to Claude Code first.")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    token = _get_nested(data, "claudeAiOauth", "accessToken")
+    if not token:
+        raise RuntimeError(f"No claudeAiOauth.accessToken in {path}. Sign in to Claude Code again.")
+    return token
+
+
+# Anthropic doesn't expose a real dollar amount for Pro/Max subscription
+# usage (it's a flat monthly fee, not pay-as-you-go) — so "billing" here is
+# an *estimate* of what today's tokens would cost at standard API rates,
+# computed locally from Claude Code's own JSONL transcripts. $ per 1M tokens
+# (input, output); unmatched/unknown models fall back to the sonnet-5 rate
+# as an approximation (noted, not exact).
+CLAUDE_PRICING = {
+    "claude-fable-5":     (10.0, 50.0),
+    "claude-mythos-5":    (10.0, 50.0),
+    "claude-opus-4-8":    (5.0, 25.0),
+    "claude-opus-4-7":    (5.0, 25.0),
+    "claude-opus-4-6":    (5.0, 25.0),
+    "claude-opus-4-5":    (5.0, 25.0),
+    "claude-sonnet-5":    (3.0, 15.0),
+    "claude-sonnet-4-6":  (3.0, 15.0),
+    "claude-sonnet-4-5":  (3.0, 15.0),
+    "claude-haiku-4-5":   (1.0, 5.0),
+}
+CLAUDE_PRICING_FALLBACK = (3.0, 15.0)  # sonnet-5 rate — approximation for unrecognized models
+
+CACHE_WRITE_5M_MULT = 1.25
+CACHE_WRITE_1H_MULT = 2.0
+CACHE_READ_MULT     = 0.1
+
+
+def claude_projects_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+
+def _claude_pricing_for(model: str):
+    if model in CLAUDE_PRICING:
+        return CLAUDE_PRICING[model]
+    # Strip a trailing dated-snapshot suffix like "-20251001" and retry.
+    stripped = re.sub(r"-\d{8}$", "", model)
+    if stripped in CLAUDE_PRICING:
+        return CLAUDE_PRICING[stripped]
+    return CLAUDE_PRICING_FALLBACK
+
+
+def claude_scan_usage_today() -> dict:
+    """Scans local Claude Code JSONL transcripts for: the most recently used
+    model (regardless of date) and an estimated USD cost for today's tokens
+    (local calendar day), broken out by model using official per-token rates.
+    Lines are deduplicated by message.id — the same message can appear on
+    multiple JSONL rows as it streams to disk."""
+    root = claude_projects_dir()
+    if not os.path.isdir(root):
+        return {"model": "", "costUSD": 0.0}
+
+    cutoff_mtime = time.time() - 2 * 86400
+    today = datetime.now().astimezone().date()
+
+    seen_ids = set()
+    last_ts = None
+    last_model = ""
+    today_totals: dict = {}  # model -> {"input":.., "output":.., "cache_5m":.., "cache_1h":.., "cache_read":..}
+
+    for dirpath, _dirs, files in os.walk(root):
+        for fname in files:
+            if not fname.endswith(".jsonl"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            try:
+                if os.path.getmtime(fpath) < cutoff_mtime:
+                    continue
+            except OSError:
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue
+                        message = row.get("message") or {}
+                        usage = message.get("usage")
+                        model = message.get("model")
+                        msg_id = message.get("id")
+                        ts = row.get("timestamp")
+                        if not usage or not model or not msg_id or not ts:
+                            continue
+                        if msg_id in seen_ids:
+                            continue
+                        seen_ids.add(msg_id)
+
+                        try:
+                            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        except ValueError:
+                            continue
+
+                        if last_ts is None or dt > last_ts:
+                            last_ts = dt
+                            last_model = model
+
+                        if dt.astimezone().date() != today:
+                            continue
+
+                        bucket = today_totals.setdefault(model, {
+                            "input": 0, "output": 0, "cache_5m": 0, "cache_1h": 0, "cache_read": 0,
+                        })
+                        bucket["input"]  += usage.get("input_tokens") or 0
+                        bucket["output"] += usage.get("output_tokens") or 0
+                        bucket["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                        creation = usage.get("cache_creation")
+                        if isinstance(creation, dict):
+                            bucket["cache_5m"] += creation.get("ephemeral_5m_input_tokens") or 0
+                            bucket["cache_1h"] += creation.get("ephemeral_1h_input_tokens") or 0
+                        else:
+                            bucket["cache_5m"] += usage.get("cache_creation_input_tokens") or 0
+            except OSError:
+                continue
+
+    total_cost = 0.0
+    for model, tok in today_totals.items():
+        in_price, out_price = _claude_pricing_for(model)
+        total_cost += tok["input"] / 1_000_000 * in_price
+        total_cost += tok["output"] / 1_000_000 * out_price
+        total_cost += tok["cache_5m"] / 1_000_000 * in_price * CACHE_WRITE_5M_MULT
+        total_cost += tok["cache_1h"] / 1_000_000 * in_price * CACHE_WRITE_1H_MULT
+        total_cost += tok["cache_read"] / 1_000_000 * in_price * CACHE_READ_MULT
+
+    return {"model": last_model, "costUSD": round(total_cost, 2)}
+
+
+def claude_probe(model: str = None) -> dict:
+    """Account-wide Pro/Max 5h + 7d subscription windows. `model` is accepted
+    for interface parity but ignored — these windows have no model dimension."""
+    token = claude_read_token()
+    body = json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "hi"}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",       # OAuth token → Bearer, not x-api-key
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",      # unlocks the unified rate-limit headers
+            "Content-Type": "application/json",
+            "User-Agent": CLAUDE_CODE_USER_AGENT,      # server gates the headers on this
+        },
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        headers = resp.headers
+        resp.read()  # drain body, not needed
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise RuntimeError(f"Token rejected (HTTP {e.code}) — sign in to Claude Code again "
+                               f"(the login token expires periodically; Claude Code refreshes it)")
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='replace')}")
+
+    def pct(name: str) -> int:
+        raw = headers.get(name)
+        if raw is None:
+            return 0
+        try:
+            return max(0, min(100, round(float(raw) * 100)))
+        except ValueError:
+            return 0
+
+    def epoch(name: str) -> int:
+        raw = headers.get(name)
+        try:
+            return int(raw) if raw is not None else 0
+        except ValueError:
+            return 0
+
+    local = claude_scan_usage_today()
+
+    return {
+        "used":         pct("anthropic-ratelimit-unified-5h-utilization"),
+        "limit":        100,
+        "resetEpoch":   epoch("anthropic-ratelimit-unified-5h-reset"),
+        "used7d":       pct("anthropic-ratelimit-unified-7d-utilization"),
+        "resetEpoch7d": epoch("anthropic-ratelimit-unified-7d-reset"),
+        "model":        local["model"],
+        "models":       [],
+        "balance":      local["costUSD"],  # estimated cost for today, not a real Pro/Max charge
+    }
+
+
 # ─── Provider registry ──────────────────────────────────────────────────────
 
 PROVIDERS = {
+    "claude": claude_probe,
     "cursor": cursor_probe,
     "codex":  codex_probe,
 }
@@ -307,14 +539,23 @@ def probe(provider: str, model: str = None) -> dict:
 # ─── Push mode ──────────────────────────────────────────────────────────────
 
 def push_to_device(ip: str, index: int, usage: dict) -> None:
-    body = json.dumps({
+    payload = {
         "index": index,
         "used": usage.get("used", 0),
         "limit": usage.get("limit", 0),
         "resetEpoch": usage.get("resetEpoch", 0),
         "used7d": usage.get("used7d", 0),
         "resetEpoch7d": usage.get("resetEpoch7d", 0),
-    }).encode("utf-8")
+    }
+    # Only present for providers that resolve a current model / cost estimate
+    # (currently just Claude) — omit entirely rather than sending an empty
+    # value, so other providers' existing on-device model/balance aren't
+    # overwritten by an absent field.
+    if usage.get("model"):
+        payload["model"] = usage["model"]
+    if usage.get("balance") is not None:
+        payload["balance"] = usage["balance"]
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"http://{ip}/push", data=body, method="POST",
         headers={"Content-Type": "application/json"},
@@ -430,7 +671,10 @@ def parse_targets(pairs: list) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--ip", help="ESP32 device IP, e.g. 192.168.1.50 (required unless --serve)")
+    parser.add_argument("--ip", default="token-tracker.local",
+                         help="ESP32 device address — IP or hostname (default: token-tracker.local, "
+                              "the device's mDNS name; use a plain IP instead if your OS can't resolve "
+                              ".local names, e.g. Windows without Bonjour/mDNS support installed)")
     parser.add_argument("--push", nargs="+", default=[],
                         help="provider:index[:model] entries to sync each cycle, e.g. cursor:1 codex:2:gpt-4o")
     parser.add_argument("--interval", type=int, default=120, help="Seconds between probes (default: 120)")
@@ -446,8 +690,6 @@ def main() -> int:
         run_server(args.port, args.cache)
         return 0
 
-    if not args.ip:
-        parser.error("--ip is required unless --serve is used")
     if not args.push:
         parser.error("--push provider:index [provider:index ...] is required unless --serve is used")
 
