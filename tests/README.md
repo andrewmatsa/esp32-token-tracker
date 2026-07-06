@@ -51,6 +51,17 @@ TT_DEVICE_URL=http://token-tracker.local npm run test:device
 - `apiKey` is never exposed by `/state`, so it can't be (and isn't) modified or
   restored — which is exactly why tests never delete a pre-existing keyed agent.
 
+## Continuous integration
+
+`.github/workflows/tests.yml` runs the suite in **mock mode** on every push to
+`main`, every PR, and on manual dispatch. GitHub-hosted runners can't reach a
+device on your LAN, so **device mode can't run there** — for that, register a
+[self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners)
+on the same network as the ESP32 and set `TT_DEVICE_URL` in that job.
+
+The workflow uploads the Playwright HTML report as a build artifact
+(`playwright-report`) for each run.
+
 ## Files
 
 | File | Purpose |
