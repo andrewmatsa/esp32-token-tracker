@@ -5,3 +5,9 @@
 .vscode/ipch
 __pycache__/
 *.pyc
+
+# Playwright test suite (tests/)
+tests/node_modules/
+tests/test-results/
+tests/playwright-report/
+tests/playwright/.cache/

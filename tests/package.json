@@ -1,0 +1,15 @@
+{
+  "name": "token-tracker-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright UI + HTTP API tests for the ESP32 token-tracker (mock and real-device modes).",
+  "scripts": {
+    "test": "playwright test",
+    "test:device": "playwright test",
+    "install-browsers": "playwright install chromium",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
