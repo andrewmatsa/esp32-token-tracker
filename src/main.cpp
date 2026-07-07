@@ -46,6 +46,15 @@ static void fetchAll() {
 
         pendingFetch[i]  = false;
         lastFetchAt[i]   = now;
+
+        // Ephemeral scheduler state for the "Sync in" display — when the
+        // NEXT on-device probe for this agent is due. Only meaningful for
+        // agents fetchAll() actually probes (real API key, checked above);
+        // never persisted, just recomputed every cycle.
+        struct tm ti;
+        uint32_t nowEpoch = getLocalTime(&ti) ? (uint32_t)mktime(&ti) : 0;
+        if (nowEpoch > 0) agents[i].nextSyncEpoch = nowEpoch + (uint32_t)(interval / 1000UL);
+
         if (fetcher_sync(agents[i])) {
             storage_save(i, agents[i]);
             anyUpdated = true;
@@ -110,6 +119,7 @@ static void onExternalPush(int index, uint32_t used, uint32_t limit, uint32_t re
     agents[index].resetEpoch   = resetEpoch;
     agents[index].used7d       = used7d;
     agents[index].resetEpoch7d = resetEpoch7d;
+    agents[index].lastSyncEpoch = (uint32_t)time(nullptr);
     storage_save(index, agents[index]);
     if (index == activeIdx) display_render(&agents[activeIdx]);
 }

@@ -18,6 +18,10 @@
 #define C_PILL_BG   0x394A          // Claude usage pill background (~#3a2b52)
 #define C_PILL_TXT  0xCD5F          // Claude usage pill text (~#c9a8ff)
 #define C_CARD_BRD  0x2104          // Claude card border grey (~#262626)
+#define C_ACC_OPENAI    0x8AFE      // OpenAI accent (~#8B5CF6) — matches data/app.js's PRESETS
+#define C_ACC_CURSOR    0x3C1E      // Cursor accent (~#3B82F6) — exact web blue, deliberate
+#define C_ACC_DEEPSEEK  0x15D4      // DeepSeek accent (~#14B8A6) — exact web teal, deliberate
+#define C_ACC_CODEX     0x15D0      // Codex accent (~#10B981)
 
 // ─── Layout constants (240x240) ───────────────────────────────────────────────
 #define HDR_H       56   // header block height
@@ -74,44 +78,69 @@ static void formatTokens(char* buf, size_t len, uint32_t val) {
         snprintf(buf, len, "%u", (unsigned)val);
 }
 
-static void drawCountdown(uint32_t resetEpoch, uint32_t nowEpoch, uint16_t y, bool warn) {
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2);
+// "Sync in Xh Ym"/"Xm Ys" — when the next on-device fetchAll() probe for this
+// agent is due. Only meaningful for agents with a real API key (keyless/
+// daemon-driven agents never get nextSyncEpoch set, so this renders blank).
+static void formatSyncIn(char* buf, size_t len, uint32_t nextSyncEpoch, uint32_t nowEpoch) {
+    if (nextSyncEpoch == 0) { buf[0] = '\0'; return; }
+    if (nowEpoch >= nextSyncEpoch) { strlcpy(buf, "Sync due", len); return; }
+    uint32_t secs = nextSyncEpoch - nowEpoch;
+    if (secs >= 86400)
+        snprintf(buf, len, "Sync in %ud %uh", (unsigned)(secs / 86400), (unsigned)((secs % 86400) / 3600));
+    else if (secs >= 3600)
+        snprintf(buf, len, "Sync in %uh %02um", (unsigned)(secs / 3600), (unsigned)((secs % 3600) / 60));
+    else
+        snprintf(buf, len, "Sync in %um %02us", (unsigned)(secs / 60), (unsigned)(secs % 60));
+}
 
-    if (resetEpoch == 0) {
-        // No reset date — leave the line blank, matching the web preview's
-        // resetLineFor() which returns '' in this case.
-        tft.fillRect(0, y - 10, 240, 20, C_BG);
-        return;
+// Generic (non-Claude) card's bottom line: "Resets in..." on the left,
+// "Sync in..." on the right (blank when nextSyncEpoch==0 — keyless agents).
+static void drawCountdown(uint32_t resetEpoch, uint32_t nowEpoch, uint32_t nextSyncEpoch, uint16_t y, bool warn) {
+    char leftBuf[32] = "";
+    uint16_t leftColor = warn ? C_ORANGE : C_SUBTEXT;
+    if (resetEpoch > 0) {
+        if (nowEpoch >= resetEpoch) {
+            strlcpy(leftBuf, "Reset due", sizeof(leftBuf));
+            leftColor = C_GREEN;
+        } else {
+            uint32_t secs = resetEpoch - nowEpoch;
+            if (secs >= 86400)
+                snprintf(leftBuf, sizeof(leftBuf), "Resets in %ud %uh", (unsigned)(secs / 86400), (unsigned)((secs % 86400) / 3600));
+            else if (secs >= 3600)
+                snprintf(leftBuf, sizeof(leftBuf), "Resets in %uh %02um", (unsigned)(secs / 3600), (unsigned)((secs % 3600) / 60));
+            else
+                snprintf(leftBuf, sizeof(leftBuf), "Resets in %um %02us", (unsigned)(secs / 60), (unsigned)(secs % 60));
+        }
     }
 
-    if (nowEpoch >= resetEpoch) {
-        tft.setTextColor(C_GREEN, C_BG);
-        tft.drawString("Reset due", 120, y);
-        return;
-    }
+    char rightBuf[24];
+    formatSyncIn(rightBuf, sizeof(rightBuf), nextSyncEpoch, nowEpoch);
 
-    uint32_t secs = resetEpoch - nowEpoch;
-    char buf[32];
-    if (secs >= 86400) {
-        uint32_t days = secs / 86400;
-        uint32_t hrs  = (secs % 86400) / 3600;
-        snprintf(buf, sizeof(buf), "Resets in %ud %uh", (unsigned)days, (unsigned)hrs);
-    } else if (secs >= 3600) {
-        uint32_t hrs  = secs / 3600;
-        uint32_t mins = (secs % 3600) / 60;
-        snprintf(buf, sizeof(buf), "Resets in %uh %02um", (unsigned)hrs, (unsigned)mins);
-    } else {
-        uint32_t mins = secs / 60;
-        uint32_t s    = secs % 60;
-        snprintf(buf, sizeof(buf), "Resets in %um %02us", (unsigned)mins, (unsigned)s);
-    }
-
-    tft.setTextColor(warn ? C_ORANGE : C_SUBTEXT, C_BG);
     // Clear line first to avoid ghost characters
     tft.fillRect(0, y - 10, 240, 20, C_BG);
-    tft.drawString(buf, 120, y);
+    tft.setTextFont(1); // smaller than before — needs to fit two columns on 240px
+
+    if (rightBuf[0] == '\0') {
+        // No sync countdown to show (keyless agent) — center the reset text
+        // alone, same as before this feature existed.
+        if (leftBuf[0]) {
+            tft.setTextDatum(MC_DATUM);
+            tft.setTextColor(leftColor, C_BG);
+            tft.drawString(leftBuf, 120, y);
+        }
+        return;
+    }
+
+    if (leftBuf[0]) {
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(leftColor, C_BG);
+        tft.drawString(leftBuf, 4, y);
+    }
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(C_SUBTEXT, C_BG);
+    tft.drawString(rightBuf, 236, y);
 }
+
 
 // ─── Pulse dot animation in header ───────────────────────────────────────────
 
@@ -149,22 +178,32 @@ static void tickSyncingDots(int16_t y) {
     _syncDotPhase = (_syncDotPhase + 1) % 3;
 }
 
-// ─── Claude "Usage" screen (Pro/Max 5h + 7d windows) ─────────────────────────
-// Mirrors the browser preview's watch-style layout in temporary.html.
-// Shows two cards (5h/7d) from the Pro/Max subscription's "unified"
-// rate-limit headers, pushed by the PC daemon (tools/usage-daemon.py reads
-// the Claude Code login OAuth token). The second card is drawn only when 7d
-// data is present, so an on-device probe with a plain API key — which exposes
-// just one per-minute tier window — still renders correctly as one card.
+// ─── Provider "Usage" card screen ────────────────────────────────────────────
+// Mirrors the browser preview's watch-style layout (data/app.js's
+// renderUsageCard()/renderUsageScreen()) — a rounded card with a big value,
+// pill badge, progress bar, and reset/sync line. Originally Claude-only;
+// generalized to also cover OpenAI, Cursor, DeepSeek, and Codex, each with
+// its own pixel-art sprite and accent color (matching data/app.js's PRESETS
+// hex colors exactly). Any other/unrecognized provider name falls back to
+// the plain generic screen further down in this file (display_render()'s
+// non-card body), unchanged.
 
-#define CLAUDE_CARD_X   16
-#define CLAUDE_CARD_W  208
-#define CLAUDE_CARD_H   68
-#define CLAUDE_CARD1_Y  84
-#define CLAUDE_CARD2_Y 160
+#define CARD_X   16
+#define CARD_W  208
+#define CARD_H   68
+#define CARD1_Y  84
+#define CARD2_Y 160
 
-static bool isClaudeAgent(const char* name) {
-    return strncasecmp(name, "claude", 6) == 0 || strncasecmp(name, "anthropic", 9) == 0;
+enum ProviderId { PROV_CLAUDE, PROV_OPENAI, PROV_CURSOR, PROV_DEEPSEEK, PROV_CODEX, PROV_NONE };
+
+static ProviderId classifyProvider(const char* name) {
+    if (strncasecmp(name, "claude", 6) == 0 || strncasecmp(name, "anthropic", 9) == 0) return PROV_CLAUDE;
+    if (strncasecmp(name, "gpt", 3) == 0 || strncasecmp(name, "openai", 6) == 0 ||
+        strncasecmp(name, "o1", 2) == 0  || strncasecmp(name, "o3", 2) == 0)           return PROV_OPENAI;
+    if (strncasecmp(name, "cursor", 6) == 0)   return PROV_CURSOR;
+    if (strncasecmp(name, "deepseek", 8) == 0) return PROV_DEEPSEEK;
+    if (strncasecmp(name, "codex", 5) == 0)     return PROV_CODEX;
+    return PROV_NONE;
 }
 
 static void drawClaudeSprite(int16_t x, int16_t y, uint8_t scale) {
@@ -181,13 +220,80 @@ static void drawClaudeSprite(int16_t x, int16_t y, uint8_t scale) {
                 tft.fillRect(x + c * scale, y + r * scale, scale, scale, C_SPRITE);
 }
 
-static uint16_t claudeBarColor(uint32_t pct) {
-    if (pct >= 85) return C_RED;
-    if (pct >= 50) return C_ORANGE;
-    return C_GREEN;
+// Ringed circle, approximating OpenAI's web icon '◎'.
+static void drawOpenAISprite(int16_t x, int16_t y, uint8_t scale) {
+    static const uint8_t px[5][9] = {
+        {0,0,1,1,1,1,1,0,0},
+        {0,1,1,0,0,0,1,1,0},
+        {1,1,0,0,0,0,0,1,1},
+        {0,1,1,0,0,0,1,1,0},
+        {0,0,1,1,1,1,1,0,0},
+    };
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 9; c++)
+            if (px[r][c])
+                tft.fillRect(x + c * scale, y + r * scale, scale, scale, C_ACC_OPENAI);
 }
 
-static void formatClaudeReset(char* buf, size_t len, uint32_t resetEpoch, uint32_t nowEpoch) {
+// 4-point star, approximating Cursor's web icon '✦'.
+static void drawCursorSprite(int16_t x, int16_t y, uint8_t scale) {
+    static const uint8_t px[5][9] = {
+        {0,0,0,0,1,0,0,0,0},
+        {0,0,0,1,1,1,0,0,0},
+        {0,1,1,1,1,1,1,1,0},
+        {0,0,0,1,1,1,0,0,0},
+        {0,0,0,0,1,0,0,0,0},
+    };
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 9; c++)
+            if (px[r][c])
+                tft.fillRect(x + c * scale, y + r * scale, scale, scale, C_ACC_CURSOR);
+}
+
+// Lightning bolt, approximating Codex's web icon '⚡'.
+static void drawCodexSprite(int16_t x, int16_t y, uint8_t scale) {
+    static const uint8_t px[5][9] = {
+        {0,0,0,1,1,1,0,0,0},
+        {0,0,1,1,0,0,0,0,0},
+        {0,1,1,1,1,1,1,0,0},
+        {0,0,0,0,1,1,0,0,0},
+        {0,0,0,1,1,0,0,0,0},
+    };
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 9; c++)
+            if (px[r][c])
+                tft.fillRect(x + c * scale, y + r * scale, scale, scale, C_ACC_CODEX);
+}
+
+// Diamond, approximating DeepSeek's web icon '◈'.
+static void drawDeepSeekSprite(int16_t x, int16_t y, uint8_t scale) {
+    static const uint8_t px[5][9] = {
+        {0,0,0,0,1,0,0,0,0},
+        {0,0,0,1,1,1,0,0,0},
+        {0,0,1,1,1,1,1,0,0},
+        {0,0,0,1,1,1,0,0,0},
+        {0,0,0,0,1,0,0,0,0},
+    };
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 9; c++)
+            if (px[r][c])
+                tft.fillRect(x + c * scale, y + r * scale, scale, scale, C_ACC_DEEPSEEK);
+}
+
+typedef void (*SpriteDrawFn)(int16_t, int16_t, uint8_t);
+struct ProviderStyle { uint16_t accent; SpriteDrawFn drawSprite; };
+
+// Indexed by ProviderId — never index with PROV_NONE (callers only reach
+// this table after classifyProvider() != PROV_NONE).
+static const ProviderStyle PROVIDER_STYLES[] = {
+    /* PROV_CLAUDE   */ { C_SPRITE,       drawClaudeSprite   },
+    /* PROV_OPENAI   */ { C_ACC_OPENAI,   drawOpenAISprite   },
+    /* PROV_CURSOR   */ { C_ACC_CURSOR,   drawCursorSprite   },
+    /* PROV_DEEPSEEK */ { C_ACC_DEEPSEEK, drawDeepSeekSprite },
+    /* PROV_CODEX    */ { C_ACC_CODEX,    drawCodexSprite    },
+};
+
+static void formatResetLine(char* buf, size_t len, uint32_t resetEpoch, uint32_t nowEpoch) {
     if (resetEpoch == 0 || resetEpoch <= nowEpoch) {
         strlcpy(buf, "Reset due", len);
         return;
@@ -201,32 +307,54 @@ static void formatClaudeReset(char* buf, size_t len, uint32_t resetEpoch, uint32
         snprintf(buf, len, "Resets in %um %02us", (unsigned)(secs / 60), (unsigned)(secs % 60));
 }
 
-// Redraws just the reset-countdown line inside a Claude usage card (partial update).
-static void tickClaudeReset(int16_t cardY, uint32_t resetEpoch, uint32_t nowEpoch) {
-    char buf[32];
-    formatClaudeReset(buf, sizeof(buf), resetEpoch, nowEpoch);
-    int16_t y = cardY + CLAUDE_CARD_H - 15;
-    tft.fillRect(CLAUDE_CARD_X + 2, y - 8, CLAUDE_CARD_W - 4, 16, C_BG);
-    tft.setTextDatum(MC_DATUM);
+// Redraws just the reset-countdown line inside a usage card (partial
+// update). show=false clears the line without drawing anything — used for
+// Claude's plain-API-key "Rate Limit" fallback card, whose per-minute window
+// has always expired again by the next fetch, so a reset line there would be
+// permanently stale/misleading; every other card (Claude's 5h/7d, and any
+// single-window card for the other 4 providers, whose resetEpoch values are
+// real monthly/weekly cycles) keeps it.
+// nextSyncEpoch>0 splits the line into "Resets in..." (left) / "Sync in..."
+// (right) — only passed non-zero for the card an on-device probe with a real
+// API key actually refreshes; a 7d/weekly card always passes 0 here since
+// the daemon, not this device, owns that window.
+static void tickCardReset(int16_t cardY, uint32_t resetEpoch, uint32_t nowEpoch, bool show, uint32_t nextSyncEpoch) {
+    int16_t y = cardY + CARD_H - 15;
+    tft.fillRect(CARD_X + 2, y - 8, CARD_W - 4, 16, C_BG);
+    if (!show) return;
+    char leftBuf[32];
+    formatResetLine(leftBuf, sizeof(leftBuf), resetEpoch, nowEpoch);
+    char rightBuf[24];
+    formatSyncIn(rightBuf, sizeof(rightBuf), nextSyncEpoch, nowEpoch);
     tft.setTextFont(1);
     tft.setTextColor(C_SUBTEXT, C_BG);
-    tft.drawString(buf, 120, y);
+    if (rightBuf[0]) {
+        tft.setTextDatum(ML_DATUM);
+        tft.drawString(leftBuf, CARD_X + 4, y);
+        tft.setTextDatum(MR_DATUM);
+        tft.drawString(rightBuf, CARD_X + CARD_W - 4, y);
+    } else {
+        tft.setTextDatum(MC_DATUM);
+        tft.drawString(leftBuf, 120, y);
+    }
 }
 
-static void drawClaudeCard(int16_t y, const char* label, uint32_t pct, uint32_t resetEpoch, uint32_t nowEpoch) {
-    tft.fillRoundRect(CLAUDE_CARD_X, y, CLAUDE_CARD_W, CLAUDE_CARD_H, 8, C_BG);
-    tft.drawRoundRect(CLAUDE_CARD_X, y, CLAUDE_CARD_W, CLAUDE_CARD_H, 8, C_CARD_BRD);
+// bigText/barPct/fillColor are preformatted by the caller so this one
+// drawing routine covers every data shape (percentage, token count, dollar
+// balance, or plain "0") across all 5 providers.
+static void drawUsageCard(int16_t y, const char* label, const char* bigText, uint32_t barPct, uint16_t fillColor,
+                           uint32_t resetEpoch, uint32_t nowEpoch, bool showReset, uint32_t nextSyncEpoch) {
+    tft.fillRoundRect(CARD_X, y, CARD_W, CARD_H, 8, C_BG);
+    tft.drawRoundRect(CARD_X, y, CARD_W, CARD_H, 8, C_CARD_BRD);
 
-    // Row 1: percentage + pill badge
+    // Row 1: big value text + pill badge
     tft.setTextDatum(ML_DATUM);
     tft.setTextFont(4);
     tft.setTextColor(C_TEXT, C_BG);
-    char pctBuf[8];
-    snprintf(pctBuf, sizeof(pctBuf), "%u%%", (unsigned)pct);
-    tft.drawString(pctBuf, CLAUDE_CARD_X + 12, y + 20);
+    tft.drawString(bigText, CARD_X + 12, y + 20);
 
     int16_t pillW = 72, pillH = 18;
-    int16_t pillX = CLAUDE_CARD_X + CLAUDE_CARD_W - pillW - 12, pillY = y + 11;
+    int16_t pillX = CARD_X + CARD_W - pillW - 12, pillY = y + 11;
     tft.fillRoundRect(pillX, pillY, pillW, pillH, 9, C_PILL_BG);
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(2);
@@ -234,42 +362,44 @@ static void drawClaudeCard(int16_t y, const char* label, uint32_t pct, uint32_t 
     tft.drawString(label, pillX + pillW / 2, pillY + pillH / 2 + 1);
 
     // Progress bar
-    int16_t barX = CLAUDE_CARD_X + 12, barY = y + 36, barW = CLAUDE_CARD_W - 24, barH = 7;
+    int16_t barX = CARD_X + 12, barY = y + 36, barW = CARD_W - 24, barH = 7;
     tft.fillRoundRect(barX, barY, barW, barH, 3, C_BAR_BG);
-    uint32_t clamped = min((uint32_t)100, pct);
+    uint32_t clamped = min((uint32_t)100, barPct);
     int16_t filled = (int16_t)(barW * clamped / 100);
-    if (filled > 0) tft.fillRoundRect(barX, barY, filled, barH, 3, claudeBarColor(clamped));
+    if (filled > 0) tft.fillRoundRect(barX, barY, filled, barH, 3, fillColor);
 
     // Reset line
-    tickClaudeReset(y, resetEpoch, nowEpoch);
+    tickCardReset(y, resetEpoch, nowEpoch, showReset, nextSyncEpoch);
 }
 
-static void renderClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
+static void renderCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId prov) {
     tft.fillScreen(C_BG);
 
     bool disabled = !agent->enabled;
-    // A rate-limit window whose reset time has already passed without a
-    // fresh sync landing yet holds a stale/frozen percentage — showing it
-    // next to an expired countdown is misleading, so show the same loading
-    // state as "no data yet" instead until the next probe completes.
-    bool isStale = (agent->resetEpoch > 0 && agent->resetEpoch <= nowEpoch);
-    // The sprite + "Usage" title only mean something once there's actual
+    // "Never synced" (no data at all yet) is the real "Syncing" trigger now —
+    // once there's ever been a real sync, just keep showing that last-known
+    // data (a lapsed reset window no longer blanks the card back to "Syncing").
+    bool neverSynced = (agent->lastSyncEpoch == 0);
+    // The sprite + name header only means something once there's actual
     // usage data on screen — omit both for Disabled/Syncing so the header
     // doesn't show a logo/title for a screen with no usage to report yet.
-    bool showHeader = !disabled && !isStale;
+    bool showHeader = !disabled && !neverSynced;
+    bool isAnthropic = (prov == PROV_CLAUDE);
 
     if (showHeader) {
-        // Header: sprite + "Usage" title, centered as a group
+        // Header: sprite + agent name, centered as a group — matches the web
+        // preview's <span class="disp-usage-title">${active.name}</span>
+        // (data/app.js), which shows the real agent name, not a generic label.
         const int16_t spriteW = 36, spriteH = 20;
         tft.setTextFont(4);
-        int16_t titleW = tft.textWidth("Usage");
+        int16_t titleW = tft.textWidth(agent->name);
         int16_t groupW = spriteW + 8 + titleW;
         int16_t startX = (240 - groupW) / 2;
 
-        drawClaudeSprite(startX, 14, 4);
+        PROVIDER_STYLES[prov].drawSprite(startX, 14, 4);
         tft.setTextDatum(ML_DATUM);
         tft.setTextColor(C_TEXT, C_BG);
-        tft.drawString("Usage", startX + spriteW + 8, 14 + spriteH / 2);
+        tft.drawString(agent->name, startX + spriteW + 8, 14 + spriteH / 2);
     }
 
     if (disabled) {
@@ -282,7 +412,7 @@ static void renderClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
         return;
     }
 
-    if (isStale) {
+    if (neverSynced) {
         tft.setTextDatum(MC_DATUM);
         tft.setTextFont(2);
         tft.setTextColor(C_SUBTEXT, C_BG);
@@ -291,49 +421,108 @@ static void renderClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
         return;
     }
 
-    // Info line: real last-used model (left) + today's estimated cost (right).
-    // Both are populated ONLY by the PC daemon's /push (JSONL-derived) — a
-    // keyed agent's rate-limit probe target (agent->probeModel) is a
-    // different, unrelated field and must never appear here, or this line
-    // would misrepresent which model the user is actually using.
-    bool hasModel = (agent->model[0] != '\0');
-    bool hasCost  = (agent->balance >= 0.0f);
-    if (hasModel || hasCost) {
-        tft.setTextFont(1);
-        if (hasModel) {
-            tft.setTextDatum(ML_DATUM);
-            tft.setTextColor(C_SUBTEXT, C_BG);
-            tft.drawString(agent->model, CLAUDE_CARD_X, 58);
-        }
-        if (hasCost) {
-            char costBuf[24];
-            snprintf(costBuf, sizeof(costBuf), "$%.2f today", agent->balance);
-            tft.setTextDatum(MR_DATUM);
-            tft.setTextColor(C_GREEN, C_BG);
-            tft.drawString(costBuf, CLAUDE_CARD_X + CLAUDE_CARD_W, 58);
+    if (isAnthropic) {
+        // Info line: real last-used model (left) + today's estimated cost
+        // (right) — Claude-only, populated ONLY by the PC daemon's /push
+        // (JSONL-derived). Mirrors data/app.js's claudeInfoLine(), which
+        // gates on isAnthropic alone — never shown for other providers.
+        bool hasModel = (agent->model[0] != '\0');
+        bool hasCost  = (agent->balance >= 0.0f);
+        if (hasModel || hasCost) {
+            tft.setTextFont(1);
+            if (hasModel) {
+                tft.setTextDatum(ML_DATUM);
+                tft.setTextColor(C_SUBTEXT, C_BG);
+                tft.drawString(agent->model, CARD_X, 58);
+            }
+            if (hasCost) {
+                char costBuf[24];
+                snprintf(costBuf, sizeof(costBuf), "$%.2f today", agent->balance);
+                tft.setTextDatum(MR_DATUM);
+                tft.setTextColor(C_GREEN, C_BG);
+                tft.drawString(costBuf, CARD_X + CARD_W, 58);
+            }
         }
     }
 
-    // Card 1: 5-hour window (or the plain-API-key per-minute window fallback).
+    uint16_t accent = PROVIDER_STYLES[prov].accent;
+    // Dual-window data (used7d/resetEpoch7d) is written generically by the PC
+    // daemon's /push — Claude's Pro/Max subscription and Codex's primary+
+    // secondary rate-limit windows both land here with no provider gate.
     bool has7d = (agent->used7d > 0 || agent->resetEpoch7d > 0);
-    uint32_t pct5h = min((uint32_t)100, agent->used);
-    drawClaudeCard(CLAUDE_CARD1_Y, has7d ? "5h" : "Rate Limit",
-                   pct5h, agent->resetEpoch, nowEpoch);
 
-    // Card 2: 7-day window (subscription probe only).
     if (has7d) {
+        uint32_t pct5h = min((uint32_t)100, agent->used);
         uint32_t pct7d = min((uint32_t)100, agent->used7d);
-        drawClaudeCard(CLAUDE_CARD2_Y, "7d", pct7d, agent->resetEpoch7d, nowEpoch);
+        char pctBuf1[8], pctBuf2[8];
+        snprintf(pctBuf1, sizeof(pctBuf1), "%u%%", (unsigned)pct5h);
+        snprintf(pctBuf2, sizeof(pctBuf2), "%u%%", (unsigned)pct7d);
+        drawUsageCard(CARD1_Y, isAnthropic ? "5h" : "Current", pctBuf1, pct5h, barColor(pct5h),
+                      agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
+        // Card 2's nextSyncEpoch is deliberately 0 — the on-device probe
+        // never touches 7d/weekly data, only the PC daemon does, so "Sync
+        // in" wouldn't mean anything on this card.
+        drawUsageCard(CARD2_Y, isAnthropic ? "7d" : "Weekly", pctBuf2, pct7d, barColor(pct7d),
+                      agent->resetEpoch7d, nowEpoch, true, 0);
+        return;
+    }
+
+    bool hasLimit   = agent->limit > 0;
+    bool hasUsed    = agent->used > 0;
+    bool hasBalance = agent->balance >= 0.0f;
+
+    if (hasLimit) {
+        // Cursor's real monthly-cycle window, or Claude's plain-API-key
+        // per-minute-tier fallback (see tickCardReset()'s comment for why
+        // Claude's reset/sync line is suppressed here but not for others).
+        uint32_t pct = usedPct(agent->used, agent->limit);
+        char pctBuf[8];
+        snprintf(pctBuf, sizeof(pctBuf), "%u%%", (unsigned)pct);
+        drawUsageCard(CARD1_Y, isAnthropic ? "Rate Limit" : "Monthly", pctBuf, pct, barColor(pct),
+                      agent->resetEpoch, nowEpoch, !isAnthropic, isAnthropic ? 0 : agent->nextSyncEpoch);
+    } else if (hasUsed) {
+        // OpenAI: token count only, no limit. Bar is a cosmetic full accent
+        // fill (no threshold coloring — there's no budget to measure against).
+        char tokBuf[16];
+        formatTokens(tokBuf, sizeof(tokBuf), agent->used);
+        drawUsageCard(CARD1_Y, "Tokens", tokBuf, 100, accent,
+                      agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
+    } else if (hasBalance) {
+        // DeepSeek: prepaid balance only, never sets resetEpoch — no reset
+        // line to show.
+        char balBuf[16];
+        snprintf(balBuf, sizeof(balBuf), "$%.2f", agent->balance);
+        drawUsageCard(CARD1_Y, "Balance", balBuf, 100, accent,
+                      agent->resetEpoch, nowEpoch, false, 0);
+    } else if (agent->resetEpoch > 0) {
+        // A fetch already completed and legitimately found zero usage.
+        drawUsageCard(CARD1_Y, "Used", "0", 0, accent,
+                      agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
     }
 }
 
-static void tickClaudeUsage(const Agent* agent, uint32_t nowEpoch) {
+static void tickCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId prov) {
     if (!agent->enabled) return; // static "Disabled" screen, nothing to animate
-    bool isStale = (agent->resetEpoch > 0 && agent->resetEpoch <= nowEpoch);
-    if (isStale) { tickSyncingDots(150); return; }
-    tickClaudeReset(CLAUDE_CARD1_Y, agent->resetEpoch, nowEpoch);
-    if (agent->used7d > 0 || agent->resetEpoch7d > 0)
-        tickClaudeReset(CLAUDE_CARD2_Y, agent->resetEpoch7d, nowEpoch);
+    if (agent->lastSyncEpoch == 0) { tickSyncingDots(150); return; }
+    bool isAnthropic = (prov == PROV_CLAUDE);
+    bool has7d = (agent->used7d > 0 || agent->resetEpoch7d > 0);
+    if (has7d) {
+        tickCardReset(CARD1_Y, agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
+        tickCardReset(CARD2_Y, agent->resetEpoch7d, nowEpoch, true, 0);
+        return;
+    }
+    bool hasLimit   = agent->limit > 0;
+    bool hasUsed    = agent->used > 0;
+    bool hasBalance = agent->balance >= 0.0f;
+    if (hasLimit) {
+        tickCardReset(CARD1_Y, agent->resetEpoch, nowEpoch, !isAnthropic, isAnthropic ? 0 : agent->nextSyncEpoch);
+    } else if (hasUsed) {
+        tickCardReset(CARD1_Y, agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
+    } else if (hasBalance) {
+        tickCardReset(CARD1_Y, agent->resetEpoch, nowEpoch, false, 0);
+    } else if (agent->resetEpoch > 0) {
+        tickCardReset(CARD1_Y, agent->resetEpoch, nowEpoch, true, agent->nextSyncEpoch);
+    }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -357,10 +546,11 @@ void display_render(const Agent* agent) {
         return;
     }
 
-    if (isClaudeAgent(agent->name)) {
+    ProviderId prov = classifyProvider(agent->name);
+    if (prov != PROV_NONE) {
         struct tm ti;
         uint32_t nowEpoch = getLocalTime(&ti) ? (uint32_t)mktime(&ti) : 0;
-        renderClaudeUsage(agent, nowEpoch);
+        renderCardUsage(agent, nowEpoch, prov);
         return;
     }
 
@@ -369,14 +559,15 @@ void display_render(const Agent* agent) {
     struct tm ti;
     uint32_t nowEpoch = getLocalTime(&ti) ? (uint32_t)mktime(&ti) : 0;
     // A window whose reset time has already passed without a fresh sync
-    // landing yet holds stale numbers (e.g. a frozen "0%" from before the
-    // window rolled over) — treat this exactly like "no data yet" instead
-    // of showing misleading frozen numbers next to an expired countdown.
-    bool isStale = (agent->resetEpoch > 0 && agent->resetEpoch <= nowEpoch);
+    // landing yet still holds real last-known numbers — once there's ever
+    // been a real sync, just keep showing them instead of blanking back to
+    // "Syncing" (neverSynced, from lastSyncEpoch, is the true "no data at
+    // all yet" signal now; resetEpoch is only the provider's own window).
+    bool neverSynced = (agent->lastSyncEpoch == 0);
 
-    bool hasLimit   = !isStale && (agent->limit > 0);
-    bool hasUsed    = !isStale && (agent->used > 0);
-    bool hasBalance = !isStale && (agent->balance >= 0.0f);
+    bool hasLimit   = !neverSynced && (agent->limit > 0);
+    bool hasUsed    = !neverSynced && (agent->used > 0);
+    bool hasBalance = !neverSynced && (agent->balance >= 0.0f);
 
     uint32_t pct  = usedPct(agent->used, agent->limit);
     bool warn = hasLimit && (pct >= WARN_THRESHOLD);
@@ -454,11 +645,12 @@ void display_render(const Agent* agent) {
         tft.setTextFont(4);
         tft.setTextColor(C_GREEN, C_BG);
         tft.drawString(balLine, 120, 120);
-    } else if (!isStale && agent->resetEpoch > 0) {
-        // A fetch already completed and legitimately found zero usage (no
-        // separate "synced" flag — resetEpoch>0 is the proxy), matching the
-        // web preview's equivalent branch instead of misleadingly showing
-        // "Syncing..." above a live reset countdown.
+    } else if (!neverSynced && agent->resetEpoch > 0) {
+        // A fetch already completed and legitimately found zero usage —
+        // neverSynced is the real "has this agent ever synced" signal now
+        // (lastSyncEpoch), matching the web preview's equivalent branch
+        // instead of misleadingly showing "Syncing..." above a live reset
+        // countdown.
         tft.setTextFont(4);
         tft.setTextColor(C_TEXT, C_BG);
         tft.drawString("Used: 0", 120, 120);
@@ -499,8 +691,9 @@ void display_tick(const Agent* agent, uint32_t nowEpoch) {
     if (!agent) return;
     if (!agent->enabled) return; // static "Disabled" screen, nothing to animate
 
-    if (isClaudeAgent(agent->name)) {
-        tickClaudeUsage(agent, nowEpoch);
+    ProviderId prov = classifyProvider(agent->name);
+    if (prov != PROV_NONE) {
+        tickCardUsage(agent, nowEpoch, prov);
         return;
     }
 
@@ -527,20 +720,16 @@ void display_tick(const Agent* agent, uint32_t nowEpoch) {
     // Pulse dot
     drawPulseDot(warn);
 
-    // Advance the "waiting for first data" bouncing dots, matching
-    // display_render()'s no-data/stale branch condition exactly.
-    bool isStale = (agent->resetEpoch > 0 && agent->resetEpoch <= nowEpoch);
-    bool hasAnyData = !isStale && ((agent->limit > 0) || (agent->used > 0) ||
-                       (agent->balance >= 0.0f) || (agent->resetEpoch > 0));
-    if (!hasAnyData) tickSyncingDots(135);
+    // Advance the "waiting for first data" bouncing dots — only while this
+    // agent has never synced at all; once it has, keep showing last-known
+    // data via the countdown below instead of these dots.
+    bool neverSynced = (agent->lastSyncEpoch == 0);
+    if (neverSynced) tickSyncingDots(135);
 
-    // Countdown timer — blanked while stale (an expired reset time with no
-    // fresh sync yet is exactly the state the loading dots above replace,
-    // so this line shouldn't contradict that by still showing "Reset due").
     bool nearReset = (agent->resetEpoch > 0 &&
                       agent->resetEpoch > nowEpoch &&
                       (agent->resetEpoch - nowEpoch) < (uint32_t)(WARN_HOURS * 3600));
-    drawCountdown(isStale ? 0 : agent->resetEpoch, nowEpoch, 201, warn || nearReset);
+    drawCountdown(agent->resetEpoch, nowEpoch, agent->nextSyncEpoch, 201, warn || nearReset);
 }
 
 // Palette restricted to orange / grey / black / white only — no green, red,

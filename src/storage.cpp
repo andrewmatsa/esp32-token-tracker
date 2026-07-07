@@ -55,6 +55,9 @@ int storage_load(Agent agents[MAX_AGENTS]) {
         makeKey(key, i, "ivl");
         agents[count].syncIntervalSec = prefs.getUInt(key, 0);
 
+        makeKey(key, i, "sync");
+        agents[count].lastSyncEpoch = prefs.getUInt(key, 0);
+
         count++;
     }
     prefs.end();
@@ -78,6 +81,7 @@ void storage_save(int index, const Agent& agent) {
     makeKey(key, index, "u7d");    prefs.putUInt(key, agent.used7d);
     makeKey(key, index, "r7d");    prefs.putUInt(key, agent.resetEpoch7d);
     makeKey(key, index, "ivl");    prefs.putUInt(key, agent.syncIntervalSec);
+    makeKey(key, index, "sync");   prefs.putUInt(key, agent.lastSyncEpoch);
 
     prefs.end();
 }
@@ -86,7 +90,7 @@ void storage_delete(int index, Agent agents[MAX_AGENTS], int& count) {
     // Remove from NVS
     prefs.begin("ttracker", false);
     char key[16];
-    const char* fields[] = {"name","model","pmodel","key","used","limit","reset","bal","active","en","u7d","r7d","ivl"};
+    const char* fields[] = {"name","model","pmodel","key","used","limit","reset","bal","active","en","u7d","r7d","ivl","sync"};
     for (auto f : fields) {
         makeKey(key, index, f);
         prefs.remove(key);

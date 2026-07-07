@@ -12,13 +12,19 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
 // Deterministic seed: one keyed, active, enabled Claude agent — enough for the
-// smoke/API assertions to have real data.
+// smoke/API assertions to have real data. lastSync/nextSync mirror the real
+// device's ephemeral scheduler fields (src/storage.h's Agent.lastSyncEpoch/
+// nextSyncEpoch, never persisted there either) — seeded as "already synced a
+// moment ago, next probe due in ~2 minutes" so the dashboard renders the same
+// "has data" branch a real just-booted device would.
 function seed() {
+  const now = Math.floor(Date.now() / 1000);
   return [{
     name: 'Claude', model: '', probeModel: '', hasKey: true,
-    used: 0, limit: 100, resetEpoch: Math.floor(Date.now() / 1000) + 3600,
+    used: 0, limit: 100, resetEpoch: now + 3600,
     balance: -1, active: true, enabled: true, syncInterval: 0,
     used7d: 0, resetEpoch7d: 0,
+    lastSync: now - 5, nextSync: now + 115,
   }];
 }
 
@@ -42,6 +48,10 @@ function applyCommand(cmd) {
           name: cmd.name || '', model: '', probeModel: '', hasKey: false,
           used: 0, limit: 0, resetEpoch: 0, balance: -1, active: false,
           enabled: true, syncInterval: 0, used7d: 0, resetEpoch7d: 0,
+          // A fresh scratch agent has never synced — matches a brand-new
+          // agent on the real device (lastSync/nextSync both 0 until the
+          // first fetchAll() cycle touches it).
+          lastSync: 0, nextSync: 0,
         });
       }
       const a = agents[i];
@@ -97,6 +107,20 @@ const server = http.createServer(async (req, res) => {
   if (url === '/__setUsed' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req) || '{}');
     if (agents[body.index]) { agents[body.index].used = body.used; agents[body.index].limit = body.limit ?? 100; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end('{"ok":true}');
+  }
+  // Mock-only control: force lastSync/resetEpoch/nextSync directly, to test
+  // the "never synced" vs "stale but shows last-known data" vs "sync in"
+  // rendering paths through the real /state → page.evaluate(refresh()) pipeline.
+  if (url === '/__setSync' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req) || '{}');
+    const a = agents[body.index];
+    if (a) {
+      if (Number.isFinite(body.lastSync)) a.lastSync = body.lastSync;
+      if (Number.isFinite(body.nextSync)) a.nextSync = body.nextSync;
+      if (Number.isFinite(body.resetEpoch)) a.resetEpoch = body.resetEpoch;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end('{"ok":true}');
   }

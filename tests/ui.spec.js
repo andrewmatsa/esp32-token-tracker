@@ -101,7 +101,7 @@ test('background poll picks up an out-of-band state change (restored)', async ({
   await page.evaluate(() => refresh());
 });
 
-test('display-logic (pure functions): model vs probeModel, stale, disabled', async ({ page }) => {
+test('display-logic (pure functions): model vs probeModel, never-synced, disabled', async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
 
   // claudeInfoLine shows the real last-used `model`, never `probeModel`.
@@ -112,25 +112,115 @@ test('display-logic (pure functions): model vs probeModel, stale, disabled', asy
   expect(infoLine).toContain('claude-sonnet-5');
   expect(infoLine).not.toContain('haiku');
 
-  // Stale agent (reset already passed) → loading placeholder, no usage card, and
-  // for Claude no logo/title either.
-  const stale = await page.evaluate((now) => renderUsageScreen(
+  // Never-synced agent (lastSync: 0, no daemon/on-device push has landed yet)
+  // → loading placeholder, no usage card, and for Claude no logo/title either.
+  // Note: a lapsed resetEpoch alone does NOT trigger this — see the
+  // "stale-but-synced" test below, which is the actual "reset already passed"
+  // case and must show last-known data, not Syncing.
+  const neverSynced = await page.evaluate((now) => renderUsageScreen(
     { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: true,
       used: 0, limit: 100, balance: -1, resetEpoch: now - 3600, used7d: 0, resetEpoch7d: 0,
-      enabled: true, active: true },
+      lastSync: 0, nextSync: 0, enabled: true, active: true },
     presetFor('Claude'),
   ), now);
-  expect(stale).toContain('disp-loading-dots');
-  expect(stale).toContain('>Syncing<');
-  expect(stale).not.toContain('Rate Limit');
-  expect(stale).not.toContain('disp-usage-sprite'); // no logo while loading (Claude)
+  expect(neverSynced).toContain('disp-loading-dots');
+  expect(neverSynced).toContain('>Syncing<');
+  expect(neverSynced).not.toContain('Rate Limit');
+  expect(neverSynced).not.toContain('disp-usage-sprite'); // no logo while loading (Claude)
 
   // Disabled agent → "Disabled" placeholder.
   const disabled = await page.evaluate((now) => renderUsageScreen(
     { name: 'Claude', model: '', probeModel: '', hasKey: true,
       used: 5, limit: 100, balance: -1, resetEpoch: now + 3600, used7d: 0, resetEpoch7d: 0,
-      enabled: false, active: true },
+      lastSync: now - 5, nextSync: now + 115, enabled: false, active: true },
     presetFor('Claude'),
   ), now);
   expect(disabled).toContain('Disabled');
+});
+
+test('display-logic: stale-but-synced keeps showing last-known data (not Syncing)', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Claude with real 5h/7d daemon data whose 5h window has already lapsed —
+  // it has synced before (lastSync > 0), so it must keep showing the
+  // last-known 52%/etc., NOT fall back to the "Syncing" placeholder.
+  // (disp-loading-dots is a separate always-on pulse for any enabled
+  // auto-sync agent — see hasAutoSync() in app.js — not a loading indicator,
+  // so it's intentionally not asserted against here.)
+  const staleDual = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: true,
+      used: 52, limit: 100, balance: 12.34, resetEpoch: now - 60,
+      used7d: 68, resetEpoch7d: now + 500000,
+      lastSync: now - 30, nextSync: now + 90, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(staleDual).not.toContain('>Syncing<');
+  expect(staleDual).not.toContain('disp-syncing');
+  expect(staleDual).toContain('52%');
+  expect(staleDual).toContain('68%');
+  expect(staleDual).toContain('Reset due'); // 5h window formatting once resetEpoch has passed
+
+  // Same for the generic (non-Claude) single-window case.
+  const staleGeneric = await page.evaluate((now) => renderUsageScreen(
+    { name: 'DeepSeek', model: '', probeModel: '', hasKey: true,
+      used: 40, limit: 100, balance: -1, resetEpoch: now - 60, used7d: 0, resetEpoch7d: 0,
+      lastSync: now - 30, nextSync: now + 90, enabled: true, active: true },
+    presetFor('DeepSeek'),
+  ), now);
+  expect(staleGeneric).not.toContain('>Syncing<');
+  expect(staleGeneric).not.toContain('disp-syncing');
+  expect(staleGeneric).toContain('40%');
+});
+
+test('display-logic: "Sync in" appears on the Claude 5h card and the generic card, not on 7d', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Claude dual-window: nextSync should surface as a split "Sync in" row
+  // alongside the 5h card's "Resets in", but never on the 7d card — the
+  // on-device probe never refreshes 7d data, only the PC daemon does.
+  const dual = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: true,
+      used: 10, limit: 100, balance: -1, resetEpoch: now + 3600,
+      used7d: 20, resetEpoch7d: now + 500000,
+      lastSync: now - 5, nextSync: now + 95, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(dual).toContain('disp-usage-reset-split');
+  expect(dual).toContain('Sync in');
+  // Exactly one split row (the 5h card's) — the 7d card must stay centered.
+  expect((dual.match(/disp-usage-reset-split/g) || []).length).toBe(1);
+
+  // Generic single-window card: same split-row treatment.
+  const generic = await page.evaluate((now) => renderUsageScreen(
+    { name: 'DeepSeek', model: '', probeModel: '', hasKey: true,
+      used: 10, limit: 100, balance: -1, resetEpoch: now + 3600, used7d: 0, resetEpoch7d: 0,
+      lastSync: now - 5, nextSync: now + 95, enabled: true, active: true },
+    presetFor('DeepSeek'),
+  ), now);
+  expect(generic).toContain('disp-usage-reset-split');
+  expect(generic).toContain('Sync in');
+
+  // Keyless/daemon-driven agent (nextSync never set on the device) → no
+  // "Sync in" anywhere, even once it has real 5h/7d data from the daemon.
+  const daemonDriven = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: false,
+      used: 10, limit: 100, balance: -1, resetEpoch: now + 3600,
+      used7d: 20, resetEpoch7d: now + 500000,
+      lastSync: now - 5, nextSync: 0, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(daemonDriven).not.toContain('disp-usage-reset-split');
+  expect(daemonDriven).not.toContain('Sync in');
+
+  // Claude's plain-API-key "Rate Limit" single-window fallback (no 7d data)
+  // shows no reset line at all, so "Sync in" has nothing to pair with there —
+  // matches the TFT's drawClaudeCard(showReset=false) for that card.
+  const rateLimitOnly = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: '', probeModel: '', hasKey: true,
+      used: 5, limit: 100, balance: -1, resetEpoch: now + 60, used7d: 0, resetEpoch7d: 0,
+      lastSync: now - 5, nextSync: now + 95, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(rateLimitOnly).toContain('Rate Limit');
+  expect(rateLimitOnly).not.toContain('Sync in');
 });

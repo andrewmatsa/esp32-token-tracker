@@ -234,6 +234,15 @@ function resetLineFor(resetEpoch) {
   return resetEpoch > now ? 'Resets in ' + formatCountdown(resetEpoch - now) : 'Reset due';
 }
 
+// Companion to resetLineFor() — when the next on-device fetchAll() probe for
+// this agent is due. Blank for keyless/daemon-driven agents (nextSyncEpoch
+// is only ever set on the device for agents with a real API key).
+function formatSyncIn(nextSyncEpoch) {
+  if (!nextSyncEpoch) return '';
+  const now = Math.floor(Date.now() / 1000);
+  return nextSyncEpoch > now ? 'Sync in ' + formatCountdown(nextSyncEpoch - now) : 'Sync due';
+}
+
 // Claude keeps its distinctive pixel-art sprite; every other provider uses
 // its own preset.icon character instead.
 function claudeSpriteSvg(color) {
@@ -257,9 +266,16 @@ function claudeSpriteSvg(color) {
 // wholesale on every tick, so comparing against the DOM isn't an option.
 let prevUsageValues = {};
 
-function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine, subLine = '') {
+function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine, subLine = '', syncLine = '') {
   const changed = prevUsageValues[key] !== undefined && prevUsageValues[key] !== bigValueText;
   prevUsageValues[key] = bigValueText;
+  // syncLine (from formatSyncIn()) is blank for keyless/daemon-driven agents —
+  // in that case just center resetLine as before. When present, split the
+  // row: resetLine left, syncLine right (mirrors display.cpp's two-column
+  // reset/sync layout).
+  const resetRow = syncLine
+    ? `<div class="disp-usage-reset disp-usage-reset-split"><span>${resetLine}</span><span>${syncLine}</span></div>`
+    : `<div class="disp-usage-reset">${resetLine}</div>`;
   return `
     <div class="disp-usage-card${changed ? ' is-updated' : ''}">
       <div class="disp-usage-row1">
@@ -268,7 +284,7 @@ function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine,
       </div>
       <div class="disp-usage-bar-wrap"><div class="disp-usage-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
       ${subLine ? `<div class="disp-usage-sub">${subLine}</div>` : ''}
-      <div class="disp-usage-reset">${resetLine}</div>
+      ${resetRow}
     </div>`;
 }
 
@@ -310,50 +326,72 @@ function renderUsageScreen(active, preset) {
       <div class="disp-syncing">Auto-sync paused</div>`;
   } else if (hasDualWindow(active)) {
     const claude = isAnthropic(active.name);
-    const pct5h = Math.min(100, Math.max(0, active.used || 0));
-    const pct7d = Math.min(100, Math.max(0, active.used7d || 0));
-    cards = renderUsageCard(`${active.name}:current`, claude ? '5h' : 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch)) +
-            renderUsageCard(`${active.name}:weekly`,  claude ? '7d' : 'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
+    if (!active.lastSync) {
+      // Never synced at all — real "Syncing" state.
+      isLoading = true;
+      cards = loadingCards(active);
+    } else {
+      // Once synced at least once, keep showing that last-known data even
+      // after the window's reset time lapses (resetLineFor already falls
+      // back to "Reset due" in that case).
+      const pct5h = Math.min(100, Math.max(0, active.used || 0));
+      const pct7d = Math.min(100, Math.max(0, active.used7d || 0));
+      // "Sync in" only on the current/5h card — that's the one an on-device
+      // probe (real API key) actually refreshes; the daemon owns the 7d
+      // window, so a device-side "Sync in" there wouldn't mean anything.
+      cards = renderUsageCard(`${active.name}:current`, claude ? '5h' : 'Current', pct5h + '%', pct5h, usageBarColor(pct5h), resetLineFor(active.resetEpoch), '', formatSyncIn(active.nextSync)) +
+              renderUsageCard(`${active.name}:weekly`,  claude ? '7d' : 'Weekly',  pct7d + '%', pct7d, usageBarColor(pct7d), resetLineFor(active.resetEpoch7d));
+    }
   } else {
-    const hasLimit   = active.limit > 0;
-    const hasUsed    = active.used > 0;
-    const hasBalance = active.balance != null && active.balance >= 0;
+    // "Never synced" (no data at all yet) is the real "Syncing" trigger now
+    // — once there's ever been a real sync, just keep showing that
+    // last-known data (a lapsed reset window no longer blanks the card
+    // back to "Syncing"; mirrors display.cpp).
+    const neverSynced = !active.lastSync;
+    const hasLimit   = !neverSynced && active.limit > 0;
+    const hasUsed    = !neverSynced && active.used > 0;
+    const hasBalance = !neverSynced && active.balance != null && active.balance >= 0;
     const resetLine  = resetLineFor(active.resetEpoch);
-    // A window whose reset time has already passed without a fresh sync
-    // landing yet holds stale numbers (e.g. a frozen "0%" from before the
-    // window rolled over) — showing them next to "Reset due" is misleading,
-    // so treat this exactly like "no data yet" until the next fetch arrives.
-    const isStale = active.resetEpoch > 0 && active.resetEpoch <= Math.floor(Date.now() / 1000);
+    const syncLine   = formatSyncIn(active.nextSync);
 
-    if (isStale) {
+    if (neverSynced) {
       isLoading = true;
       cards = loadingCards(active);
     } else if (hasLimit) {
       const pct = Math.min(100, Math.round(active.used * 100 / active.limit));
+      const claude = isAnthropic(active.name);
       // Claude's percentage here is a per-minute tier rate limit, not a
       // monthly budget like OpenAI/Cursor/Codex — label it accordingly,
       // matching the physical display's "Rate Limit" pill.
-      const label = isAnthropic(active.name) ? 'Rate Limit' : 'Monthly';
-      // Raw "used / limit tokens" sub-line + limit-reached note — mirrors
-      // display.cpp's hasLimit branch, which shows both the numbers and a
-      // "LIMIT REACHED" banner, not just the percentage.
-      const subLine = `${formatTokens(active.used)} / ${formatTokens(active.limit)} tokens` +
+      const label = claude ? 'Rate Limit' : 'Monthly';
+      // This per-minute window is so short it's always expired again by the
+      // next fetch (fetches run every few minutes at best) — the tokens
+      // count and reset line would be permanently stale/misleading here, so
+      // Claude's single-window card just shows the percentage, matching the
+      // TFT's drawClaudeCard (only the real 5h/7d subscription cards show a
+      // reset line). Other providers' monthly window is meaningful, so they
+      // keep both.
+      const subLine     = claude ? '' : `${formatTokens(active.used)} / ${formatTokens(active.limit)} tokens` +
         (pct >= 100 ? ' — <span style="color:#ef4444;font-weight:600">LIMIT REACHED</span>' : '');
-      cards = renderUsageCard(`${active.name}:monthly`, label, pct + '%', pct, usageBarColor(pct), resetLine, subLine);
+      const cardResetLine = claude ? '' : resetLine;
+      // Claude's Rate-Limit fallback card shows no reset line at all (see
+      // above), so there's nothing for "Sync in" to sit next to — leave it
+      // off there too, matching the TFT.
+      const cardSyncLine  = claude ? '' : syncLine;
+      cards = renderUsageCard(`${active.name}:monthly`, label, pct + '%', pct, usageBarColor(pct), cardResetLine, subLine, cardSyncLine);
     } else if (hasUsed && hasBalance) {
       // Both a token count and a balance (e.g. future providers) — mirrors
       // display.cpp's combined "Used: X tokens" + "Balance: $Y" branch.
       cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine,
-        'Balance: $' + active.balance.toFixed(2));
+        'Balance: $' + active.balance.toFixed(2), syncLine);
     } else if (hasUsed) {
-      cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine);
+      cards = renderUsageCard(`${active.name}:tokens`, 'Tokens', formatTokens(active.used), 100, preset.color, resetLine, '', syncLine);
     } else if (hasBalance) {
-      cards = renderUsageCard(`${active.name}:balance`, 'Balance', '$' + active.balance.toFixed(2), 100, preset.color, resetLine);
+      cards = renderUsageCard(`${active.name}:balance`, 'Balance', '$' + active.balance.toFixed(2), 100, preset.color, resetLine, '', syncLine);
     } else if (active.resetEpoch > 0) {
       // No usage/limit/balance, but a reset time is set — a fetch already
-      // completed and legitimately found zero usage (the real device has
-      // no separate "synced" flag, so resetEpoch>0 is the proxy for that).
-      cards = renderUsageCard(`${active.name}:used`, 'Used', '0', 0, preset.color, resetLine);
+      // completed and legitimately found zero usage.
+      cards = renderUsageCard(`${active.name}:used`, 'Used', '0', 0, preset.color, resetLine, '', syncLine);
     } else {
       isLoading = true;
       cards = loadingCards(active);

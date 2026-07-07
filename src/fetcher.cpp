@@ -252,16 +252,26 @@ static bool syncAnthropic(Agent& agent) {
             uint32_t pct = (uint32_t)constrain(
                 100.0f * (float)(limitVal - remainingVal) / (float)limitVal, 0.0f, 100.0f);
 
-            agent.used    = pct;
-            agent.limit   = 100;   // percentage-based window, not raw tokens
-            agent.balance = -1.0f; // not applicable
-            agent.resetEpoch    = parseRfc3339ToEpoch(http.header("anthropic-ratelimit-tokens-reset"));
-            agent.used7d        = 0; // no second window with a standard API key
-            agent.resetEpoch7d  = 0;
+            // used7d/resetEpoch7d are written ONLY by the PC daemon's /push
+            // (a plain API key has no second window) — their presence means
+            // this agent is being fed real Pro/Max 5h+7d data there, and in
+            // that case used/limit/resetEpoch/balance ARE that same 5h card,
+            // not this per-minute rate-limit reading. Overwriting them with
+            // the per-minute probe here would clobber the daemon's real 52%
+            // (etc.) with a near-meaningless "0%, reset due" every ~100s, so
+            // skip writing them entirely once the daemon has taken over.
+            bool hasDaemonData = (agent.used7d > 0 || agent.resetEpoch7d > 0);
+            if (!hasDaemonData) {
+                agent.used    = pct;
+                agent.limit   = 100;   // percentage-based window, not raw tokens
+                agent.balance = -1.0f; // not applicable
+                agent.resetEpoch = parseRfc3339ToEpoch(http.header("anthropic-ratelimit-tokens-reset"));
+            }
             ok = true;
 
-            Serial.printf("[FETCH] Anthropic: tokens %ld/%ld used=%u%% reset=%u (HTTP %d)\n",
-                          limitVal - remainingVal, limitVal, pct, agent.resetEpoch, code);
+            Serial.printf("[FETCH] Anthropic: tokens %ld/%ld used=%u%% reset=%u (HTTP %d)%s\n",
+                          limitVal - remainingVal, limitVal, pct, agent.resetEpoch, code,
+                          hasDaemonData ? " [daemon owns 5h/7d, not overwriting]" : "");
         }
     } else {
         Serial.printf("[FETCH] Anthropic: HTTP %d, no rate-limit headers (bad/invalid API key?)\n", code);
@@ -346,10 +356,12 @@ static bool syncCursor(Agent& agent) {
 
 bool fetcher_sync(Agent& agent) {
     if (strlen(agent.apiKey) == 0) return false;
-    if (isOpenAI(agent))    return syncOpenAI(agent);
-    if (isDeepSeek(agent))  return syncDeepSeek(agent);
-    if (isAnthropic(agent)) return syncAnthropic(agent);
-    if (isCursor(agent))    return syncCursor(agent);
-    Serial.printf("[FETCH] No auto-sync for '%s'\n", agent.name);
-    return false;
+    bool ok = false;
+    if      (isOpenAI(agent))    ok = syncOpenAI(agent);
+    else if (isDeepSeek(agent))  ok = syncDeepSeek(agent);
+    else if (isAnthropic(agent)) ok = syncAnthropic(agent);
+    else if (isCursor(agent))    ok = syncCursor(agent);
+    else { Serial.printf("[FETCH] No auto-sync for '%s'\n", agent.name); return false; }
+    if (ok) agent.lastSyncEpoch = (uint32_t)time(nullptr);
+    return ok;
 }

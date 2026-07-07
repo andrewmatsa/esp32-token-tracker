@@ -18,6 +18,7 @@
   #btn-save { background: var(--accent); color: #fff; width: 100%; padding: 12px; font-size: 1rem; margin-top: 8px; }
   #msg { margin-top: 16px; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; display: none; }
   #msg.ok  { background: #14532d; color: var(--green); }
+  #msg.ok a { color: #fff; font-weight: 600; }
   #msg.err { background: #450a0a; color: var(--red); }
   .spinner { display: none; text-align: center; padding: 10px; color: var(--sub); }
 </style>
@@ -64,7 +65,9 @@
       const data = await res.json();
       spinner.style.display = 'none';
       if (data.ok) {
-        showMsg(`Connected! IP: ${data.ip} — device is restarting…`, true);
+        showMsg('Already connected! Device is restarting — reconnect to your '
+          + 'WiFi, then visit <a href="http://token-tracker.local/">'
+          + 'token-tracker.local</a> to add or view an agent.', true, true);
       } else {
         showMsg(data.msg || 'Connection failed. Check password.', false);
         document.getElementById('btn-save').disabled = false;
@@ -76,8 +79,8 @@
     }
   }
 
-  function showMsg(text, ok) {
-    msgEl.textContent  = text;
+  function showMsg(text, ok, html) {
+    if (html) { msgEl.innerHTML = text; } else { msgEl.textContent = text; }
     msgEl.className    = ok ? 'ok' : 'err';
     msgEl.style.display = 'block';
   }

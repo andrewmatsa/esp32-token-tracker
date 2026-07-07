@@ -24,6 +24,12 @@ test('GET /state returns a well-formed agents array', async ({ request }) => {
     expect(a).toHaveProperty('used');
     expect(a).toHaveProperty('limit');
     expect(a).toHaveProperty('probeModel');
+    // lastSync/nextSync are the ephemeral scheduler fields added for the
+    // "never synced" vs "stale but shows last-known data" vs "Sync in"
+    // display logic — never persisted device-side, but always present on
+    // /state (0 when not applicable, e.g. a keyless/daemon-driven agent).
+    expect(a).toHaveProperty('lastSync');
+    expect(a).toHaveProperty('nextSync');
     // apiKey must never be exposed.
     expect(a).not.toHaveProperty('apiKey');
   }

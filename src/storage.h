@@ -26,6 +26,17 @@ struct Agent {
     uint32_t used7d;         // Claude only: 7-day rate-limit window %, 0-100
     uint32_t resetEpoch7d;   // Claude only: unix timestamp of the 7-day window reset
     uint32_t syncIntervalSec; // Claude only: seconds between probes (0 = use FETCH_INTERVAL_MS default)
+    uint32_t lastSyncEpoch;   // unix timestamp of last successful sync (0 = never synced).
+                              // Distinct from resetEpoch (the provider's own window-reset
+                              // time) — used to soften stale-window rendering: once a card
+                              // has ever synced, a lapsed resetEpoch dims it instead of
+                              // blanking it back to "Syncing".
+    uint32_t nextSyncEpoch;  // unix timestamp of the next on-device fetchAll() attempt for
+                             // this agent (0 = not scheduled — keyless/daemon-driven agents
+                             // never get an on-device probe, so this stays 0 for them).
+                             // EPHEMERAL: recomputed every fetchAll() cycle from
+                             // agent.syncIntervalSec, never persisted to NVS (storage.cpp
+                             // intentionally skips it) — it's scheduler state, not user data.
 };
 
 // Load all agents from NVS into the provided array. Returns count loaded.
