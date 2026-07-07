@@ -92,4 +92,4 @@ For Claude Code / Codex / Cursor auto-sync via the companion PC script, see
 ## Project layout
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture breakdown (firmware
-modules, WebSocket protocol, storage layout, display render logic).
+modules, HTTP protocol, storage layout, display render logic).

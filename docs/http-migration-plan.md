@@ -1,9 +1,10 @@
-# Plan: migrate browser ↔ ESP32 from WebSocket to plain HTTP (future work)
+# Historical: migrating browser ↔ ESP32 from WebSocket to plain HTTP
 
-> **Status: not started** — recorded for a future simplification pass. The
-> current WebSocket transport works and stays until this is deliberately
-> picked up (see the ADR at the bottom). This document is the execution plan
-> for when that day comes.
+> **Status: completed** (see commit `4a9a33c`, "Replace WebSocket with plain
+> HTTP"). `webserver.cpp`/`data/app.js` now use `GET /state` polling +
+> `POST /command`, as described below and in `CLAUDE.md`'s HTTP Protocol
+> section. This document is kept as the original rationale/ADR for that
+> change, not as an active plan — nothing here describes future work.
 
 ## Context / why
 
@@ -116,13 +117,12 @@ poll-driven rather than connection-driven.
 
 ---
 
-## Appendix — ADR: why this is deferred, not done now
+## Appendix — ADR: why this was originally deferred (superseded — see status note at top)
 
-WebSocket is unnecessary but **works and is tested**; the AsyncWebServer
-dependency stays regardless (static files, `/push`, `/wifi/*`); the device is
-single-user / one-tab where the RAM concern is negligible; and migrating is
-pure refactoring risk with zero user-facing benefit.
-
-**Revisit when:** actual instability appears (heap exhaustion, dropped
-connections, multi-tab crashes), or this layer is being touched for other
-reasons anyway.
+At the time this was written, WebSocket was unnecessary but **worked and was
+tested**; the AsyncWebServer dependency stayed regardless (static files,
+`/push`, `/wifi/*`); the device is single-user / one-tab where the RAM
+concern is negligible; and migrating was pure refactoring risk with zero
+user-facing benefit at the time. The migration was later picked up anyway
+(commit `4a9a33c`) and is complete — this section is kept only as the
+original reasoning for why it wasn't done immediately.
