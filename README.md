@@ -14,6 +14,12 @@ WiFi is configured via a captive portal; you add agents and API keys through
 a browser UI; the device polls provider APIs autonomously every 10 minutes
 and shows live usage on its screen.
 
+<p align="center">
+  <img src="docs/images/device-photo.jpg" alt="Token Tracker device showing Claude usage on its TFT display" width="45%">
+  &nbsp;&nbsp;
+  <img src="docs/images/web-dashboard.png" alt="Web dashboard with the ESP32 display preview" width="45%">
+</p>
+
 ## Features
 
 - 📶 **Captive-portal WiFi setup** — no hardcoded credentials, connect from
@@ -28,7 +34,13 @@ and shows live usage on its screen.
   whose auth can't be typed into the device directly — Claude Code's local
   OAuth session and Codex CLI's local login — plus Cursor IDE's local token.
   The web UI generates the exact command to run (device IP, agent slot
-  index, configurable push interval) — just copy and paste.
+  index) — just copy and paste. Its push interval is set live from the
+  web UI's "Update every (sec)" field and re-read every cycle, so changing
+  it takes effect without restarting the script.
+- ⚠️ **Daemon-staleness warning** — if the companion script stops running,
+  the device notices (no push within the expected interval) and shows
+  "Start the daemon for fresh data" on both the TFT and web UI instead of
+  silently going stale.
 
 ## Hardware
 
@@ -88,6 +100,12 @@ per provider and paste an API key (where applicable).
 
 For Claude Code / Codex / Cursor auto-sync via the companion PC script, see
 [`tools/README.md`](tools/README.md).
+
+## Testing
+
+A Playwright suite covers the web dashboard and REST API, running against
+either an auto-started mock (no hardware needed) or the real device. See
+[`tests/README.md`](tests/README.md).
 
 ## Project layout
 
