@@ -16,7 +16,7 @@ and shows live usage on its screen.
 
 <p align="center">
   <img src="docs/images/device-photo.jpg" alt="Token Tracker device showing Claude usage on its TFT display" width="45%">
-  &nbsp;&nbsp;
+  <br>
   <img src="docs/images/web-dashboard.png" alt="Web dashboard with the ESP32 display preview" width="45%">
 </p>
 
