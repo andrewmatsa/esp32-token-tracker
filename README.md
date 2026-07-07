@@ -98,7 +98,18 @@ On first boot the device opens a WiFi setup portal — connect to it, pick
 your network, and it reboots into the main web UI. From there, add an agent
 per provider and paste an API key (where applicable).
 
-For Claude Code / Codex / Cursor auto-sync via the companion PC script, see
+For Claude Code / Codex / Cursor, add the agent with the API key field left
+empty, then run the companion script on your PC to push usage (the web UI's
+agent card shows this exact command, pre-filled with your device IP and
+agent slot):
+
+```bash
+python tools/usage-daemon.py --push claude:0
+```
+
+Its push interval is controlled live from the web UI's "Update every
+(sec)" field — no need to restart the script after changing it. Full setup
+(model filters, multiple providers, bridge mode) in
 [`tools/README.md`](tools/README.md).
 
 ## Testing
