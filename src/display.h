@@ -24,5 +24,10 @@ void display_renderWifiSetup(const char* apSsid);
 // the setup portal's connection-wait loop.
 void display_tickWifiSetup();
 
-// Render the connecting screen with a text spinner.
+// Render the connecting screen: SSID + a preview of the steps about to run.
 void display_renderConnecting(const char* ssid);
+
+// Advance the bouncing-dots animation on the connecting screen. Call
+// periodically (e.g. every ANIM_INTERVAL_MS) while blocked waiting for
+// WiFi.status() to become WL_CONNECTED.
+void display_tickConnecting();

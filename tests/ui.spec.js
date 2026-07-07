@@ -104,8 +104,10 @@ test('background poll picks up an out-of-band state change (restored)', async ({
 test('display-logic (pure functions): model vs probeModel, never-synced, disabled', async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
 
-  // claudeInfoLine shows the real last-used `model`, never `probeModel`.
-  const infoLine = await page.evaluate((now) => claudeInfoLine({
+  // infoOrWarnLine shows the real last-used `model`, never `probeModel`
+  // (this agent is keyed with no dual-window data, so it isn't
+  // daemon-dependent — no "Start the daemon" warning to worry about here).
+  const infoLine = await page.evaluate((now) => infoOrWarnLine({
     name: 'Claude', model: 'claude-sonnet-5', probeModel: 'claude-haiku-4-5-20251001',
     hasKey: true, balance: -1, resetEpoch: now + 3600,
   }), now);
@@ -223,4 +225,109 @@ test('display-logic: "Sync in" appears on the Claude 5h card and the generic car
   ), now);
   expect(rateLimitOnly).toContain('Rate Limit');
   expect(rateLimitOnly).not.toContain('Sync in');
+});
+
+test('display-logic: "Start the daemon" warning replaces the info line when daemon-dependent data goes stale', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  const STALE = now - 400; // beyond DAEMON_STALE_SEC (300s)
+  const FRESH = now - 30;
+
+  // Keyless Claude (fully daemon-dependent) whose daemon has gone quiet —
+  // real last-used model/cost would normally show here, but since it's
+  // stale, the warning takes over instead of presenting old data as current.
+  const staleKeyless = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: false,
+      used: 52, limit: 100, balance: 12.34, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000,
+      lastSync: now - 5, nextSync: 0, lastPush: now - 400, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(staleKeyless).toContain('Start the daemon');
+  expect(staleKeyless).not.toContain('claude-sonnet-5');
+  expect(staleKeyless).not.toContain('today');
+
+  // Same agent, but the daemon pushed recently — normal info line, no warning.
+  const fresh = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: false,
+      used: 52, limit: 100, balance: 12.34, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000,
+      lastSync: now - 5, nextSync: 0, lastPush: now - 30, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(fresh).not.toContain('Start the daemon');
+  expect(fresh).toContain('claude-sonnet-5');
+
+  // Keyed Claude with dual-window daemon data (the exact scenario that
+  // motivated this feature — hasKey=true no longer means "daemon doesn't
+  // matter") whose daemon has gone stale.
+  const keyedButDaemonDependent = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: 'claude-sonnet-5', probeModel: '', hasKey: true,
+      used: 55, limit: 100, balance: 33.68, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000,
+      lastSync: now - 5, nextSync: now + 100, lastPush: now - 400, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(keyedButDaemonDependent).toContain('Start the daemon');
+
+  // Codex is always daemon-only, even with no dual-window data yet — a
+  // fresh keyless Codex agent with just a single-window "Current" card and
+  // no lastPush ever should still warn (never-pushed = maximally stale).
+  const codexNeverPushed = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Codex', model: '', probeModel: '', hasKey: false,
+      used: 10, limit: 0, balance: -1, resetEpoch: now + 3600, used7d: 0, resetEpoch7d: 0,
+      lastSync: now - 5, nextSync: 0, lastPush: 0, enabled: true, active: true },
+    presetFor('Codex'),
+  ), now);
+  expect(codexNeverPushed).toContain('Start the daemon');
+
+  // Cursor with a real API key and no dual-window data isn't daemon-dependent
+  // at all — never warn regardless of lastPush.
+  const cursorKeyedNoDaemon = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Cursor', model: '', probeModel: '', hasKey: true,
+      used: 40, limit: 100, balance: -1, resetEpoch: now + 3600, used7d: 0, resetEpoch7d: 0,
+      lastSync: now - 5, nextSync: now + 100, lastPush: 0, enabled: true, active: true },
+    presetFor('Cursor'),
+  ), now);
+  expect(cursorKeyedNoDaemon).not.toContain('Start the daemon');
+});
+
+test('display-logic: daemon-stale threshold is personalized to a keyless agent\'s "Update every" interval', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+
+  // syncInterval=20 -> threshold = max(10,20)*2.5 = 50s. lastPush 60s ago
+  // exceeds that personalized threshold, even though it's well under the
+  // flat 300s fallback — proves the shorter interval is actually honored,
+  // not silently ignored in favor of the fallback.
+  const shortIntervalStale = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: '', probeModel: '', hasKey: false,
+      used: 52, limit: 100, balance: -1, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000, syncInterval: 20,
+      lastSync: now - 5, nextSync: 0, lastPush: now - 60, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(shortIntervalStale).toContain('Start the daemon');
+
+  // Same interval, but lastPush only 30s ago — under the 50s personalized
+  // threshold, so no warning.
+  const shortIntervalFresh = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: '', probeModel: '', hasKey: false,
+      used: 52, limit: 100, balance: -1, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000, syncInterval: 20,
+      lastSync: now - 5, nextSync: 0, lastPush: now - 30, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(shortIntervalFresh).not.toContain('Start the daemon');
+
+  // syncInterval=200 -> threshold = max(10,200)*2.5 = 500s. lastPush 400s
+  // ago exceeds the flat 300s fallback but not this personalized 500s
+  // threshold — proves a longer configured interval also extends tolerance,
+  // not just shortens it.
+  const longIntervalNotStale = await page.evaluate((now) => renderUsageScreen(
+    { name: 'Claude', model: '', probeModel: '', hasKey: false,
+      used: 52, limit: 100, balance: -1, resetEpoch: now + 3600,
+      used7d: 68, resetEpoch7d: now + 500000, syncInterval: 200,
+      lastSync: now - 5, nextSync: 0, lastPush: now - 400, enabled: true, active: true },
+    presetFor('Claude'),
+  ), now);
+  expect(longIntervalNotStale).not.toContain('Start the daemon');
 });

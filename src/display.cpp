@@ -372,6 +372,84 @@ static void drawUsageCard(int16_t y, const char* label, const char* bigText, uin
     tickCardReset(y, resetEpoch, nowEpoch, showReset, nextSyncEpoch);
 }
 
+// Whether this agent's best/only data comes from the PC companion daemon
+// (tools/usage-daemon.py), so a stopped daemon should surface a warning
+// instead of silently going stale. Codex has no on-device fetch path at
+// all, so it's always daemon-dependent; Claude/Cursor are daemon-dependent
+// once keyless, OR once they've ever received dual-window daemon data
+// (used7d/resetEpoch7d) — losing the daemon at that point degrades them
+// back to a lesser (or no) on-device reading, which is worth flagging too.
+static bool needsDaemon(ProviderId prov, const Agent* agent) {
+    if (prov == PROV_CODEX) return true;
+    if (prov != PROV_CLAUDE && prov != PROV_CURSOR) return false;
+    return strlen(agent->apiKey) == 0 || agent->used7d > 0 || agent->resetEpoch7d > 0;
+}
+
+// Safety margin applied on top of whatever interval we're using as the
+// "expected daemon cadence" — tolerates a missed cycle or two (slow API
+// response, brief network hiccup) without a false "daemon down" warning.
+#define DAEMON_STALE_MULTIPLIER  2.5f
+
+// The threshold daemonIsStale() compares against. agent.syncIntervalSec
+// means two different things depending on the agent (see storage.h): for a
+// KEYLESS agent it doubles as the suggested --interval in the daemon
+// command data/app.js's daemonCommandFor() prints for the user to copy —
+// the closest on-device signal we have to what the daemon is actually
+// running with, so honor it here. For a KEYED agent it's the on-device
+// probe cadence instead, completely unrelated to the daemon's own timing —
+// using it here would measure the wrong thing, so those always fall back
+// to the flat DAEMON_STALE_SEC (2.5x the daemon's own 120s default).
+static uint32_t daemonStaleThreshold(const Agent* agent) {
+    if (strlen(agent->apiKey) == 0 && agent->syncIntervalSec > 0)
+        return (uint32_t)(max((uint32_t)10, agent->syncIntervalSec) * DAEMON_STALE_MULTIPLIER);
+    return DAEMON_STALE_SEC;
+}
+
+// True when the daemon has never pushed, or hasn't in over the threshold.
+// Deliberately independent of lastSyncEpoch — see storage.h's comment on
+// lastPushEpoch for why lastSyncEpoch alone can't detect this.
+static bool daemonIsStale(const Agent* agent, uint32_t nowEpoch) {
+    return agent->lastPushEpoch == 0 || (nowEpoch - agent->lastPushEpoch) > daemonStaleThreshold(agent);
+}
+
+// The line below the header: a "start the daemon" warning when this agent
+// needs the daemon and it's gone quiet, otherwise (Claude only) the real
+// last-used model + today's estimated cost — both populated ONLY by the PC
+// daemon's /push (JSONL-derived), so showing them while the daemon is stale
+// would just be presenting old data as current. Mirrors data/app.js's
+// infoOrWarnLine(). Called from both renderCardUsage() (full draw) and
+// tickCardUsage() (per-tick refresh), since staleness can flip purely from
+// time passing, with no new /push event to trigger a full re-render.
+static void drawInfoLine(const Agent* agent, uint32_t nowEpoch, ProviderId prov) {
+    tft.fillRect(CARD_X, 50, CARD_W, 16, C_BG);
+
+    if (needsDaemon(prov, agent) && daemonIsStale(agent, nowEpoch)) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextFont(1);
+        tft.setTextColor(C_ORANGE, C_BG);
+        tft.drawString("Start the daemon for fresh data", 120, 58);
+        return;
+    }
+
+    if (prov != PROV_CLAUDE) return;
+    bool hasModel = (agent->model[0] != '\0');
+    bool hasCost  = (agent->balance >= 0.0f);
+    if (!hasModel && !hasCost) return;
+    tft.setTextFont(1);
+    if (hasModel) {
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(C_SUBTEXT, C_BG);
+        tft.drawString(agent->model, CARD_X, 58);
+    }
+    if (hasCost) {
+        char costBuf[24];
+        snprintf(costBuf, sizeof(costBuf), "$%.2f today", agent->balance);
+        tft.setTextDatum(MR_DATUM);
+        tft.setTextColor(C_GREEN, C_BG);
+        tft.drawString(costBuf, CARD_X + CARD_W, 58);
+    }
+}
+
 static void renderCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId prov) {
     tft.fillScreen(C_BG);
 
@@ -421,29 +499,7 @@ static void renderCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId pr
         return;
     }
 
-    if (isAnthropic) {
-        // Info line: real last-used model (left) + today's estimated cost
-        // (right) — Claude-only, populated ONLY by the PC daemon's /push
-        // (JSONL-derived). Mirrors data/app.js's claudeInfoLine(), which
-        // gates on isAnthropic alone — never shown for other providers.
-        bool hasModel = (agent->model[0] != '\0');
-        bool hasCost  = (agent->balance >= 0.0f);
-        if (hasModel || hasCost) {
-            tft.setTextFont(1);
-            if (hasModel) {
-                tft.setTextDatum(ML_DATUM);
-                tft.setTextColor(C_SUBTEXT, C_BG);
-                tft.drawString(agent->model, CARD_X, 58);
-            }
-            if (hasCost) {
-                char costBuf[24];
-                snprintf(costBuf, sizeof(costBuf), "$%.2f today", agent->balance);
-                tft.setTextDatum(MR_DATUM);
-                tft.setTextColor(C_GREEN, C_BG);
-                tft.drawString(costBuf, CARD_X + CARD_W, 58);
-            }
-        }
-    }
+    drawInfoLine(agent, nowEpoch, prov);
 
     uint16_t accent = PROVIDER_STYLES[prov].accent;
     // Dual-window data (used7d/resetEpoch7d) is written generically by the PC
@@ -504,6 +560,9 @@ static void renderCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId pr
 static void tickCardUsage(const Agent* agent, uint32_t nowEpoch, ProviderId prov) {
     if (!agent->enabled) return; // static "Disabled" screen, nothing to animate
     if (agent->lastSyncEpoch == 0) { tickSyncingDots(150); return; }
+    // Re-check every tick, not just on a full render — staleness can flip
+    // purely from time passing, with no new /push event to trigger a redraw.
+    drawInfoLine(agent, nowEpoch, prov);
     bool isAnthropic = (prov == PROV_CLAUDE);
     bool has7d = (agent->used7d > 0 || agent->resetEpoch7d > 0);
     if (has7d) {
@@ -795,13 +854,34 @@ void display_renderConnecting(const char* ssid) {
 
     tft.setTextFont(2);
     tft.setTextColor(C_SUBTEXT, C_BG);
-    tft.drawString(ssid, 120, 100);
+    tft.drawString(ssid, 120, 90);
 
-    // Static spinner chars — will be overwritten by repeated calls during connect loop
-    static uint8_t frame = 0;
-    const char* frames[] = {"[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]", "[ ===]", "[  ==]", "[   =]"};
+    // What's about to happen, in order — a static preview list (this screen
+    // has no visibility into main.cpp's setup() steps after WiFi actually
+    // connects, so it's informational, not a live-ticking checklist).
+    tft.setTextDatum(ML_DATUM);
     tft.setTextFont(2);
-    tft.setTextColor(C_ORANGE, C_BG);
-    tft.drawString(frames[frame % 8], 120, 140);
-    frame++;
+    tft.setTextColor(C_SUBTEXT, C_BG);
+    tft.drawString("- Connecting to WiFi", 24, 126);
+    tft.drawString("- Getting IP address", 24, 150);
+    tft.drawString("- Starting web server", 24, 174);
+}
+
+// ─── Waiting-dots animation for the "Connecting..." screen ──────────────────
+// Call periodically (e.g. every ANIM_INTERVAL_MS) while blocked waiting for
+// WiFi.status() to become WL_CONNECTED — same bouncing-dot language as
+// display_tickWifiSetup()/tickSyncingDots(), so every "waiting" screen on
+// this device feels consistent.
+static uint8_t _connectingDotPhase = 0;
+
+void display_tickConnecting() {
+    const int y = 205;
+    const int cx[3] = {105, 120, 135};
+
+    tft.fillRect(90, y - 8, 60, 16, C_BG); // erase previous frame
+    for (int i = 0; i < 3; i++) {
+        bool active = (i == _connectingDotPhase);
+        tft.fillCircle(cx[i], y, active ? 5 : 3, active ? C_ORANGE : C_SUBTEXT);
+    }
+    _connectingDotPhase = (_connectingDotPhase + 1) % 3;
 }

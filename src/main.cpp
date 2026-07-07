@@ -120,6 +120,7 @@ static void onExternalPush(int index, uint32_t used, uint32_t limit, uint32_t re
     agents[index].used7d       = used7d;
     agents[index].resetEpoch7d = resetEpoch7d;
     agents[index].lastSyncEpoch = (uint32_t)time(nullptr);
+    agents[index].lastPushEpoch = agents[index].lastSyncEpoch;
     storage_save(index, agents[index]);
     if (index == activeIdx) display_render(&agents[activeIdx]);
 }

@@ -38,6 +38,7 @@ static String buildStateJson(Agent agents[MAX_AGENTS], int count) {
         o["resetEpoch7d"] = agents[i].resetEpoch7d;
         o["lastSync"]     = agents[i].lastSyncEpoch;
         o["nextSync"]     = agents[i].nextSyncEpoch;
+        o["lastPush"]     = agents[i].lastPushEpoch;
     }
     String out;
     serializeJson(doc, out);

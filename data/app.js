@@ -90,6 +90,45 @@ function daemonCommandFor(name, index, intervalValue) {
   return `python tools/usage-daemon.py --push ${slug}:${index}${intervalFlag}`;
 }
 
+// Fallback threshold (seconds) — keep in sync with include/config.h's
+// DAEMON_STALE_SEC. Used as-is for keyed agents; keyless agents instead
+// scale their own syncInterval by DAEMON_STALE_MULTIPLIER (see
+// daemonStaleThreshold() below — mirrors display.cpp's daemonStaleThreshold()).
+const DAEMON_STALE_SEC = 300;
+const DAEMON_STALE_MULTIPLIER = 2.5;
+
+// Whether an agent's best/only data comes from the PC companion daemon —
+// mirrors display.cpp's needsDaemon(). Codex has no on-device fetch path at
+// all; Claude/Cursor are daemon-dependent once keyless, OR once they've
+// ever received dual-window daemon data (used7d/resetEpoch7d).
+function needsDaemon(agent) {
+  if (isCodex(agent.name)) return true;
+  if (!isAnthropic(agent.name) && !isCursor(agent.name)) return false;
+  return !agent.hasKey || agent.used7d > 0 || agent.resetEpoch7d > 0;
+}
+
+// agent.syncInterval means two different things depending on the agent
+// (see storage.h's syncIntervalSec comment): for a KEYLESS agent it doubles
+// as the suggested --interval in the daemon command daemonCommandFor()
+// prints for the user to copy — the closest signal we have to what the
+// daemon is actually running with, so honor it here. For a KEYED agent
+// it's the on-device probe cadence instead, unrelated to the daemon's own
+// timing — those always fall back to the flat DAEMON_STALE_SEC.
+function daemonStaleThreshold(agent) {
+  if (!agent.hasKey && agent.syncInterval > 0)
+    return Math.max(10, agent.syncInterval) * DAEMON_STALE_MULTIPLIER;
+  return DAEMON_STALE_SEC;
+}
+
+// Mirrors display.cpp's daemonIsStale() — true when the daemon has never
+// pushed, or hasn't in over the threshold. Independent of lastSync, which
+// the on-device probe also bumps even when daemon data exists (see
+// storage.h's lastPushEpoch comment for why that alone can't detect this).
+function daemonIsStale(agent) {
+  const now = Math.floor(Date.now() / 1000);
+  return !agent.lastPush || (now - agent.lastPush) > daemonStaleThreshold(agent);
+}
+
 function presetFor(name) {
   const lower = (name || '').toLowerCase();
   return PRESETS.find(p => lower.startsWith(p.id) || lower === p.name.toLowerCase())
@@ -288,14 +327,20 @@ function renderUsageCard(key, pillLabel, bigValueText, pct, barColor, resetLine,
     </div>`;
 }
 
-// Mirrors display.cpp's renderClaudeUsage() info line: real last-used model
-// (left) + estimated cost for today (right). Both come ONLY from the PC
-// daemon's JSONL scan (usage-daemon.py's claude_scan_usage_today()) — a
-// keyed agent's rate-limit probe target (active.probeModel) is a separate,
-// unrelated field and must never appear here, or this line would
-// misrepresent which model the user is actually using. Cost is not a real
-// Pro/Max charge — Anthropic doesn't expose one for the flat subscription.
-function claudeInfoLine(active) {
+// The line below the header: a "start the daemon" warning when this agent
+// needs the daemon and it's gone quiet, otherwise (Claude only) the real
+// last-used model (left) + estimated cost for today (right) — both come
+// ONLY from the PC daemon's JSONL scan (usage-daemon.py's
+// claude_scan_usage_today()), so showing them while the daemon is stale
+// would just present old data as current. A keyed agent's rate-limit probe
+// target (active.probeModel) is a separate, unrelated field and must never
+// appear here, or this line would misrepresent which model the user is
+// actually using. Cost is not a real Pro/Max charge — Anthropic doesn't
+// expose one for the flat subscription. Mirrors display.cpp's drawInfoLine().
+function infoOrWarnLine(active) {
+  if (needsDaemon(active) && daemonIsStale(active)) {
+    return `<div class="disp-usage-info disp-usage-warn">Start the daemon for fresh data</div>`;
+  }
   if (!isAnthropic(active.name)) return '';
   const hasModel = !!active.model;
   const hasCost  = active.balance != null && active.balance >= 0;
@@ -420,7 +465,7 @@ function renderUsageScreen(active, preset) {
         ${hideHeader ? '' : `<span class="disp-usage-title">${active.name}</span>`}
       </div>
       <div class="disp-usage-body">
-        ${isLoading ? '' : claudeInfoLine(active)}
+        ${isLoading ? '' : infoOrWarnLine(active)}
         ${cards}
       </div>
     </div>`;
@@ -530,11 +575,16 @@ function buildCard(ag, i) {
     const intervalInput = card.querySelector('.inp-interval');
     intervalInput.value = ag.syncInterval || '';
 
-    // Ready-to-paste daemon command for keyless (daemon-driven) agents —
-    // updates live as the interval field changes, no save round-trip needed.
+    // Ready-to-paste daemon command for keyless (daemon-driven) agents, and
+    // also for keyed agents whose richer daemon-sourced data (5h/7d, real
+    // model/cost) has gone stale — a keyed Claude agent with dual-window
+    // data still needs the daemon running for that data to stay fresh, so
+    // hiding this once a key is added would leave no way to find the
+    // restart command again. Updates live as the interval field changes,
+    // no save round-trip needed.
     const cmdRow = card.querySelector('.daemon-cmd-row');
     const cmdEl  = card.querySelector('.daemon-cmd');
-    if (!ag.hasKey && daemonSlugFor(ag.name)) {
+    if ((!ag.hasKey || (needsDaemon(ag) && daemonIsStale(ag))) && daemonSlugFor(ag.name)) {
       cmdRow.hidden = false;
       cmdEl.textContent = daemonCommandFor(ag.name, i, intervalInput.value);
       // token-tracker.local needs mDNS support on the machine running the

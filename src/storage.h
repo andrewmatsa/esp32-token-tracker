@@ -37,6 +37,14 @@ struct Agent {
                              // EPHEMERAL: recomputed every fetchAll() cycle from
                              // agent.syncIntervalSec, never persisted to NVS (storage.cpp
                              // intentionally skips it) — it's scheduler state, not user data.
+    uint32_t lastPushEpoch;  // unix timestamp of the last PC daemon /push for this agent
+                             // (0 = never pushed). Distinct from lastSyncEpoch, which the
+                             // on-device probe also stamps on every successful sync even when
+                             // it's not allowed to overwrite used/used7d/etc (because daemon
+                             // data already exists there) — that made lastSyncEpoch look
+                             // "fresh" even when the daemon itself had stopped running, hiding
+                             // real staleness. lastPushEpoch is written ONLY by onExternalPush().
+                             // EPHEMERAL: never persisted to NVS, like nextSyncEpoch.
 };
 
 // Load all agents from NVS into the provided array. Returns count loaded.

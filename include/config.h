@@ -32,6 +32,19 @@
 // ─── Auto-fetch ───────────────────────────────────────────────────────────────
 #define FETCH_INTERVAL_MS  600000UL // 10 minutes between background syncs
 
+// Fallback threshold (seconds) for how long without a PC daemon /push
+// before an agent that depends on it is considered stale and shows a
+// "start the daemon" warning instead of its last-known info line. Used
+// as-is for keyed agents (display.cpp's daemonStaleThreshold() — their
+// syncIntervalSec means the on-device probe cadence, not the daemon's, so
+// there's no better on-device signal); for keyless agents, that function
+// instead scales the daemon-command-suggested syncIntervalSec by the same
+// DAEMON_STALE_MULTIPLIER. tools/usage-daemon.py's own default --interval
+// is 120s, so 300s (2.5x) tolerates normal jitter without being too slow to
+// notice a genuinely stopped daemon. Mirrored in data/app.js's
+// DAEMON_STALE_SEC — keep both in sync.
+#define DAEMON_STALE_SEC  300
+
 // ─── Anthropic probe defaults ─────────────────────────────────────────────────
 // Model used by syncAnthropic() when the user leaves the web UI's Model
 // dropdown on "Default". Shared with display.cpp so the TFT/web preview can

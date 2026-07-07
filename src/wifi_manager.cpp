@@ -70,8 +70,13 @@ bool wifi_connect(const char* apSsid) {
     WiFi.begin(ssid.c_str(), pass.c_str());
 
     uint32_t deadline = millis() + WIFI_CONNECT_TIMEOUT_S * 1000UL;
+    uint32_t lastAnim = millis();
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-        delay(200);
+        delay(10);
+        if (millis() - lastAnim >= ANIM_INTERVAL_MS) {
+            lastAnim = millis();
+            display_tickConnecting();
+        }
     }
 
     if (WiFi.status() == WL_CONNECTED) {
@@ -126,7 +131,13 @@ void wifi_runSetupPortal(const char* apSsid) {
     dns.start(53, "*", apIp);
 
     AsyncWebServer portalServer(80);
-    volatile bool  connected = false;
+    volatile bool  connected  = false;
+    // True while the /wifi/save handler (its own AsyncWebServer task) owns
+    // the "Connecting..." screen and is ticking its own dots — the outer
+    // loop below must not tick display_tickWifiSetup() at the same time, or
+    // both animations draw concurrently onto the same TFT and visibly
+    // duplicate/collide.
+    volatile bool  connecting = false;
 
     // Serve setup page. The path arg must be the directory ("/"), not the
     // file itself — passing "/wifi-setup.html" here made the library look
@@ -158,15 +169,21 @@ void wifi_runSetupPortal(const char* apSsid) {
         String pass = req->getParam("pass", true)->value();
 
         Serial.printf("[AP] Trying SSID: %s\n", ssid.c_str());
+        connecting = true;
         display_renderConnecting(ssid.c_str());
 
         WiFi.mode(WIFI_AP_STA);
         WiFi.begin(ssid.c_str(), pass.c_str());
 
         uint32_t deadline = millis() + WIFI_CONNECT_TIMEOUT_S * 1000UL;
+        uint32_t lastAnim = millis();
         while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
             dns.processNextRequest();
-            delay(200);
+            delay(10);
+            if (millis() - lastAnim >= ANIM_INTERVAL_MS) {
+                lastAnim = millis();
+                display_tickConnecting();
+            }
         }
 
         if (WiFi.status() == WL_CONNECTED) {
@@ -179,6 +196,7 @@ void wifi_runSetupPortal(const char* apSsid) {
         } else {
             WiFi.disconnect(true);
             WiFi.mode(WIFI_AP);
+            connecting = false; // hand the screen (and its dot animation) back to the outer loop
             display_renderWifiSetup(apSsid);
             req->send(200, "application/json",
                       "{\"ok\":false,\"msg\":\"Wrong password or network not found\"}");
@@ -193,7 +211,7 @@ void wifi_runSetupPortal(const char* apSsid) {
     while (!connected) {
         dns.processNextRequest();
         delay(10);
-        if (millis() - lastAnim >= ANIM_INTERVAL_MS) {
+        if (!connecting && millis() - lastAnim >= ANIM_INTERVAL_MS) {
             lastAnim = millis();
             display_tickWifiSetup();
         }

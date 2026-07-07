@@ -30,6 +30,10 @@ test('GET /state returns a well-formed agents array', async ({ request }) => {
     // /state (0 when not applicable, e.g. a keyless/daemon-driven agent).
     expect(a).toHaveProperty('lastSync');
     expect(a).toHaveProperty('nextSync');
+    // lastPush is the daemon-only staleness signal — distinct from lastSync,
+    // which the on-device probe also bumps even when it can't overwrite
+    // daemon-sourced fields (see storage.h's lastPushEpoch comment).
+    expect(a).toHaveProperty('lastPush');
     // apiKey must never be exposed.
     expect(a).not.toHaveProperty('apiKey');
   }

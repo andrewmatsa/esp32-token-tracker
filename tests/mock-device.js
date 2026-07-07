@@ -25,6 +25,11 @@ function seed() {
     balance: -1, active: true, enabled: true, syncInterval: 0,
     used7d: 0, resetEpoch7d: 0,
     lastSync: now - 5, nextSync: now + 115,
+    // Keyed, no dual-window data yet — this agent isn't daemon-dependent
+    // (needsDaemon() is false for it), so a real device would show
+    // lastPush: 0 (never pushed) forever unless the daemon starts pushing
+    // dual-window data to it too.
+    lastPush: 0,
   }];
 }
 
@@ -51,7 +56,7 @@ function applyCommand(cmd) {
           // A fresh scratch agent has never synced — matches a brand-new
           // agent on the real device (lastSync/nextSync both 0 until the
           // first fetchAll() cycle touches it).
-          lastSync: 0, nextSync: 0,
+          lastSync: 0, nextSync: 0, lastPush: 0,
         });
       }
       const a = agents[i];
@@ -110,9 +115,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end('{"ok":true}');
   }
-  // Mock-only control: force lastSync/resetEpoch/nextSync directly, to test
-  // the "never synced" vs "stale but shows last-known data" vs "sync in"
-  // rendering paths through the real /state → page.evaluate(refresh()) pipeline.
+  // Mock-only control: force lastSync/resetEpoch/nextSync/lastPush directly,
+  // to test the "never synced" vs "stale but shows last-known data" vs
+  // "sync in" vs "daemon stale" rendering paths through the real /state →
+  // page.evaluate(refresh()) pipeline.
   if (url === '/__setSync' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req) || '{}');
     const a = agents[body.index];
@@ -120,6 +126,7 @@ const server = http.createServer(async (req, res) => {
       if (Number.isFinite(body.lastSync)) a.lastSync = body.lastSync;
       if (Number.isFinite(body.nextSync)) a.nextSync = body.nextSync;
       if (Number.isFinite(body.resetEpoch)) a.resetEpoch = body.resetEpoch;
+      if (Number.isFinite(body.lastPush)) a.lastPush = body.lastPush;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end('{"ok":true}');
