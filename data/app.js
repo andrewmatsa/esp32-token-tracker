@@ -77,10 +77,10 @@ function daemonSlugFor(name) {
   return null;
 }
 // The daemon defaults --ip to "token-tracker.local" (the device's mDNS
-// name, advertised by main.cpp) and --interval to 120 — so the common case
+// name, advertised by main.cpp) and --interval to 100 — so the common case
 // needs neither flag spelled out. Both stay overridable on the command line
 // (e.g. a plain IP, if the user's OS can't resolve .local names).
-const DAEMON_DEFAULT_INTERVAL = 120;
+const DAEMON_DEFAULT_INTERVAL = 100;
 function daemonCommandFor(name, index, intervalValue) {
   const slug = daemonSlugFor(name);
   if (!slug) return '';
@@ -94,7 +94,7 @@ function daemonCommandFor(name, index, intervalValue) {
 // DAEMON_STALE_SEC. Used as-is for keyed agents; keyless agents instead
 // scale their own syncInterval by DAEMON_STALE_MULTIPLIER (see
 // daemonStaleThreshold() below — mirrors display.cpp's daemonStaleThreshold()).
-const DAEMON_STALE_SEC = 300;
+const DAEMON_STALE_SEC = 250;
 const DAEMON_STALE_MULTIPLIER = 2.5;
 
 // Whether an agent's best/only data comes from the PC companion daemon —
@@ -701,7 +701,7 @@ async function resetWifi() {
 buildPresetGrid();
 refresh();
 // Background poll to pick up device-side changes (background fetchAll every
-// 10 min, daemon /push every ~120 s) — the interval self-heals a dropped
+// 10 min, daemon /push every ~100 s) — the interval self-heals a dropped
 // connection, so no separate reconnect logic is needed.
 setInterval(refresh, 15000);
 loadWifiInfo();

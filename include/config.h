@@ -40,10 +40,17 @@
 // there's no better on-device signal); for keyless agents, that function
 // instead scales the daemon-command-suggested syncIntervalSec by the same
 // DAEMON_STALE_MULTIPLIER. tools/usage-daemon.py's own default --interval
-// is 120s, so 300s (2.5x) tolerates normal jitter without being too slow to
+// is 100s, so 250s (2.5x) tolerates normal jitter without being too slow to
 // notice a genuinely stopped daemon. Mirrored in data/app.js's
 // DAEMON_STALE_SEC — keep both in sync.
-#define DAEMON_STALE_SEC  300
+#define DAEMON_STALE_SEC  250
+
+// Assumed PC daemon push cadence when an agent's own syncIntervalSec is 0
+// (unset) — used to estimate nextSyncEpoch ("Sync in") for daemon-pushed
+// agents in onExternalPush(), since the device can't observe the daemon's
+// real --interval directly. Matches tools/usage-daemon.py's own default and
+// data/app.js's DAEMON_DEFAULT_INTERVAL.
+#define DAEMON_DEFAULT_INTERVAL_SEC  100
 
 // ─── Anthropic probe defaults ─────────────────────────────────────────────────
 // Model used by syncAnthropic() when the user leaves the web UI's Model

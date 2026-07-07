@@ -39,6 +39,17 @@ static void fetchAll() {
         if (strlen(agents[i].apiKey) == 0) continue;
         if (!agents[i].enabled) continue;
 
+        // Once the PC daemon is feeding this agent real dual-window data
+        // (5h+7d, richer than this on-device per-minute-tier probe could
+        // ever produce), stop probing on-device entirely — fetcher.cpp's
+        // hasDaemonData guard only skipped *writing* the probe's result,
+        // not the HTTP request itself, so every cycle was still spending
+        // real rate-limit budget on a result nobody ever saw. Leave
+        // nextSyncEpoch alone here — onExternalPush() already estimates it
+        // from lastPushEpoch + the daemon's (assumed) interval, so "Sync
+        // in" keeps counting down to the next expected daemon push instead.
+        if (agents[i].used7d > 0 || agents[i].resetEpoch7d > 0) continue;
+
         unsigned long interval = (agents[i].syncIntervalSec > 0)
             ? (unsigned long)agents[i].syncIntervalSec * 1000UL
             : FETCH_INTERVAL_MS;
@@ -121,6 +132,14 @@ static void onExternalPush(int index, uint32_t used, uint32_t limit, uint32_t re
     agents[index].resetEpoch7d = resetEpoch7d;
     agents[index].lastSyncEpoch = (uint32_t)time(nullptr);
     agents[index].lastPushEpoch = agents[index].lastSyncEpoch;
+    // Estimated "Sync in" countdown for daemon-pushed agents (keyless, or
+    // keyed-but-daemon-owned per fetchAll()'s skip below) — the device
+    // can't observe the daemon's real --interval, so this is lastPush +
+    // whatever interval the web UI's "Update every (sec)" field suggests
+    // (or the daemon's own default if that's unset). Self-corrects on every
+    // real push, so a wrong guess only drifts for one cycle.
+    agents[index].nextSyncEpoch = agents[index].lastPushEpoch +
+        (agents[index].syncIntervalSec > 0 ? agents[index].syncIntervalSec : DAEMON_DEFAULT_INTERVAL_SEC);
     storage_save(index, agents[index]);
     if (index == activeIdx) display_render(&agents[activeIdx]);
 }

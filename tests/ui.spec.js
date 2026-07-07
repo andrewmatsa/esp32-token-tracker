@@ -229,7 +229,7 @@ test('display-logic: "Sync in" appears on the Claude 5h card and the generic car
 
 test('display-logic: "Start the daemon" warning replaces the info line when daemon-dependent data goes stale', async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
-  const STALE = now - 400; // beyond DAEMON_STALE_SEC (300s)
+  const STALE = now - 400; // beyond DAEMON_STALE_SEC (250s)
   const FRESH = now - 30;
 
   // Keyless Claude (fully daemon-dependent) whose daemon has gone quiet —
@@ -296,7 +296,7 @@ test('display-logic: daemon-stale threshold is personalized to a keyless agent\'
 
   // syncInterval=20 -> threshold = max(10,20)*2.5 = 50s. lastPush 60s ago
   // exceeds that personalized threshold, even though it's well under the
-  // flat 300s fallback — proves the shorter interval is actually honored,
+  // flat 250s fallback — proves the shorter interval is actually honored,
   // not silently ignored in favor of the fallback.
   const shortIntervalStale = await page.evaluate((now) => renderUsageScreen(
     { name: 'Claude', model: '', probeModel: '', hasKey: false,
@@ -319,7 +319,7 @@ test('display-logic: daemon-stale threshold is personalized to a keyless agent\'
   expect(shortIntervalFresh).not.toContain('Start the daemon');
 
   // syncInterval=200 -> threshold = max(10,200)*2.5 = 500s. lastPush 400s
-  // ago exceeds the flat 300s fallback but not this personalized 500s
+  // ago exceeds the flat 250s fallback but not this personalized 500s
   // threshold — proves a longer configured interval also extends tolerance,
   // not just shortens it.
   const longIntervalNotStale = await page.evaluate((now) => renderUsageScreen(

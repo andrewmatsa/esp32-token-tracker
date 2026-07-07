@@ -69,8 +69,22 @@ Options:
 | ------------ | ---------------------- | --------------------------------------------------------- |
 | `--ip`       | `token-tracker.local`  | Device address — IP or hostname                            |
 | `--push`     | —                       | One or more `provider:index[:model]` entries (required unless `--serve`) |
-| `--interval` | `120`                   | Seconds between probe/push cycles                          |
+| `--interval` | `100`                   | Seconds between probe/push cycles — **initial/fallback default only**, see below |
 | `--once`     | off                     | Run a single cycle and exit                                |
+
+### The web UI's "Update every (sec)" is live, not just a suggestion
+
+`--interval` only applies until the daemon can reach the device. After each
+push cycle, the daemon re-reads each target agent's own "Update every
+(sec)" field (`GET /state`'s `syncInterval`) and sleeps for that instead —
+so changing the value in the browser takes effect on the *next* cycle,
+with no need to restart this process. If the device is unreachable that
+cycle, or an agent's field is unset, `--interval` is used for that agent as
+a fallback. Whatever value comes from the device is clamped to a minimum
+of 60s regardless of what the web UI allows — a background loop hitting
+the real provider API needs a higher floor than the field's own `min="10"`
+(tuned for the on-device probe, not a perpetual daemon loop), or a low web
+value would burn real rate-limit budget for no benefit.
 
 ### Filtering to one model (Cursor / Codex)
 

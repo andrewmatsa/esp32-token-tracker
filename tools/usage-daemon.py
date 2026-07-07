@@ -23,7 +23,7 @@ Push mode — pushes each configured provider to its own agent slot on the
 device, in a single shared loop. Each --push entry is provider:index, or
 provider:index:model to filter to one model bucket instead of the
 account-wide total (Claude ignores the model filter):
-    python usage-daemon.py --ip 192.168.1.50 --push claude:0 cursor:1 codex:2:gpt-4o [--interval 120] [--once]
+    python usage-daemon.py --ip 192.168.1.50 --push claude:0 cursor:1 codex:2:gpt-4o [--interval 100] [--once]
 
 Bridge mode — one local server for browser-based testing (temporary.html),
 serving every provider on one port via ?provider=:
@@ -575,6 +575,38 @@ def run_once(ip: str, targets: dict) -> None:
             log(f"{prov}: ERROR: {e}")
 
 
+# Minimum honored interval, independent of the web UI's own `min="10"` on
+# the "Update every (sec)" field. That field was tuned for the old
+# on-device on-demand-probe framing; a background loop hitting the real
+# provider API forever needs a higher floor, or a low web value would burn
+# real rate-limit budget for no benefit — the same problem the on-device
+# probe was recently changed to avoid, just moved here instead.
+MIN_DAEMON_INTERVAL = 60
+
+
+def fetch_device_intervals(ip: str, targets: dict) -> dict:
+    """One GET /state call, returns {provider: syncInterval-or-None} for
+    each target — None means the device didn't report a usable value for
+    that agent (unreachable, bad index, or field unset/0), so the caller
+    should fall back to its own default for that target."""
+    intervals = {prov: None for prov in targets}
+    try:
+        req = urllib.request.Request(f"http://{ip}/state", method="GET")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            state = json.loads(resp.read())
+    except Exception as e:
+        log(f"fetch_device_intervals: ERROR: {e}")
+        return intervals
+
+    agents = state.get("agents", [])
+    for prov, (index, _model) in targets.items():
+        if 0 <= index < len(agents):
+            interval = agents[index].get("syncInterval")
+            if isinstance(interval, int) and interval > 0:
+                intervals[prov] = interval
+    return intervals
+
+
 # ─── Bridge mode ────────────────────────────────────────────────────────────
 
 class BridgeHandler(BaseHTTPRequestHandler):
@@ -677,7 +709,7 @@ def main() -> int:
                               ".local names, e.g. Windows without Bonjour/mDNS support installed)")
     parser.add_argument("--push", nargs="+", default=[],
                         help="provider:index[:model] entries to sync each cycle, e.g. cursor:1 codex:2:gpt-4o")
-    parser.add_argument("--interval", type=int, default=120, help="Seconds between probes (default: 120)")
+    parser.add_argument("--interval", type=int, default=100, help="Seconds between probes (default: 100)")
     parser.add_argument("--once", action="store_true", help="Run a single probe/push cycle and exit")
     parser.add_argument("--serve", action="store_true",
                         help="Run a local HTTP bridge (GET /usage?provider=...) for browser-based testing")
@@ -699,10 +731,26 @@ def main() -> int:
         run_once(args.ip, targets)
         return 0
 
-    log(f"Starting daemon: device={args.ip} targets={targets} interval={args.interval}s")
+    log(f"Starting daemon: device={args.ip} targets={targets} interval={args.interval}s (default — "
+        f"each agent's own \"Update every (sec)\" in the web UI overrides this once the device is "
+        f"reachable, floor {MIN_DAEMON_INTERVAL}s)")
     while True:
         run_once(args.ip, targets)
-        time.sleep(args.interval)
+
+        # Re-checked every cycle (not just at startup) so a change made in
+        # the web UI takes effect on the *next* sleep without restarting
+        # this process. Falls back to --interval per-target when the device
+        # doesn't report a usable value (unreachable, bad index, unset).
+        device_intervals = fetch_device_intervals(args.ip, targets)
+        resolved = [
+            max(MIN_DAEMON_INTERVAL, v) if v is not None else args.interval
+            for v in device_intervals.values()
+        ]
+        sleep_for = min(resolved) if resolved else args.interval
+        if any(v is not None for v in device_intervals.values()):
+            log(f"sleeping {sleep_for}s (web-configured, floor {MIN_DAEMON_INTERVAL}s)")
+
+        time.sleep(sleep_for)
 
 
 if __name__ == "__main__":
