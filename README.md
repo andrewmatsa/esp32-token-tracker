@@ -15,7 +15,7 @@ a browser UI; the device polls provider APIs autonomously every 10 minutes
 and shows live usage on its screen.
 
 <p align="center">
-  <img src="docs/images/device-photo.jpg" alt="Token Tracker device showing Claude usage on its TFT display" width="100%">
+  <img src="docs/images/device-photo.jpg" alt="Token Tracker device showing Claude usage on its TFT display" width="50%">
   <br>
   <img src="docs/images/web-dashboard.png" alt="Web dashboard with the ESP32 display preview" width="100%">
 </p>
