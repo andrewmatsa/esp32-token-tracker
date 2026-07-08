@@ -44,8 +44,9 @@ and shows live usage on its screen.
 
 ## Hardware
 
-- ESP32-C3 Super Mini
-- 1.54" ST7789 240×240 TFT display
+- ESP32-C3 Super Mini -> https://www.aliexpress.com/i/1005005319963906.html
+- 1.54" ST7789 240×240 TFT display -> https://shorturl.at/lCPbd
+- 3d print -> https://www.thingiverse.com/thing:7380035
 - Pin mapping (see `platformio.ini`): SCLK=4, MOSI=6, CS=7, DC=2, RST=3, BL=8
 
 ## Wiring
